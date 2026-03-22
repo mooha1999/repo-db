@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from ..introspection.ir import ModelIR
@@ -35,7 +34,7 @@ def generate_all(models: list[ModelIR], output_dir: str | Path) -> dict[str, int
     _write_file(output_dir / "base.py", BASE_REPO_TEMPLATE)
 
     # Write top-level __init__.py
-    init_imports = []
+    init_imports: list[str] = []
     for model in gen_models:
         snake = model_name_to_snake(model.class_name)
         init_imports.append(f"from .{snake} import {model.class_name}Repository")

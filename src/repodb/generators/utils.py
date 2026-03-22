@@ -48,7 +48,7 @@ def get_filter_type(col: ColumnIR) -> str | None:
 
 def model_name_to_snake(name: str) -> str:
     """Convert CamelCase model name to snake_case for directory names."""
-    result = []
+    result: list[str] = []
     for i, char in enumerate(name):
         if char.isupper() and i > 0:
             result.append("_")

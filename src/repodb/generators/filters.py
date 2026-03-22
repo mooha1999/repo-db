@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from .utils import python_type_to_annotation
 from ..introspection.ir import ModelIR
 
 
@@ -20,12 +19,12 @@ _TYPE_TO_FILTER = {
 
 def generate_filters(model: ModelIR) -> str:
     """Generate filter DTO source code for a model."""
-    imports = set()
+    imports: set[str] = set()
     imports.add("from pydantic import BaseModel")
 
-    base_filter_types = set()
-    enum_filters = []  # (enum_class_name, enum_module)
-    filter_fields = []
+    base_filter_types: set[str] = set()
+    enum_filters: list[str] = []  # (enum_class_name, enum_module)
+    filter_fields: list[str] = []
 
     for col in model.columns:
         if col.name == "deleted_at":
@@ -49,7 +48,9 @@ def generate_filters(model: ModelIR) -> str:
         imports.add(f"from ..base import {types_str}")
 
     lines = [
-        '"""Auto-generated filters for {name}. Do not edit manually."""'.format(name=model.class_name),
+        '"""Auto-generated filters for {name}. Do not edit manually."""'.format(
+            name=model.class_name
+        ),
         "",
         "from __future__ import annotations",
         "",

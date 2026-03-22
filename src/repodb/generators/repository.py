@@ -8,7 +8,7 @@ from .utils import python_type_to_annotation
 
 def generate_repository(model: ModelIR) -> str:
     """Generate concrete repository source code for a model."""
-    imports = set()
+    imports: set[str] = set()
     imports.add("from __future__ import annotations")
     imports.add("from ..base import BaseRepository")
 
@@ -21,7 +21,9 @@ def generate_repository(model: ModelIR) -> str:
     imports.add(f"from .load_options import {model.class_name}LoadOptions")
 
     lines = [
-        '"""Auto-generated repository for {name}. Do not edit manually."""'.format(name=model.class_name),
+        '"""Auto-generated repository for {name}. Do not edit manually."""'.format(
+            name=model.class_name
+        ),
         "",
         "from __future__ import annotations",
         "",
@@ -48,7 +50,7 @@ def generate_repository(model: ModelIR) -> str:
     lines.append("")
 
     # Generate repository class
-    type_params = (
+    type_params: str = (
         f"{model.class_name}, "
         f"{model.class_name}Create, "
         f"{model.class_name}Update, "
@@ -61,9 +63,15 @@ def generate_repository(model: ModelIR) -> str:
     lines.append(f"    soft_deletable = {model.is_soft_deletable}")
 
     # If single-table inheritance child, add discriminator filter
-    if model.inheritance and model.inheritance.is_child and model.inheritance.discriminator_value:
+    if (
+        model.inheritance
+        and model.inheritance.is_child
+        and model.inheritance.discriminator_value
+    ):
         lines.append("")
-        lines.append(f'    _discriminator_value = "{model.inheritance.discriminator_value}"')
+        lines.append(
+            f'    _discriminator_value = "{model.inheritance.discriminator_value}"'
+        )
 
     lines.append("")
 
@@ -72,7 +80,7 @@ def generate_repository(model: ModelIR) -> str:
 
 def generate_init(model: ModelIR) -> str:
     """Generate __init__.py for a model's package."""
-    snake_name = _to_snake(model.class_name)
+    _to_snake(model.class_name)
     lines = [
         f'"""Auto-generated package for {model.class_name}."""',
         "",
@@ -101,7 +109,7 @@ def generate_init(model: ModelIR) -> str:
 
 def _to_snake(name: str) -> str:
     """CamelCase to snake_case."""
-    result = []
+    result: list[str] = []
     for i, c in enumerate(name):
         if c.isupper() and i > 0:
             result.append("_")
