@@ -12,7 +12,7 @@ from repogen.generators.loading_generator import generate_load_options
 _MODELS_FILE = Path(__file__).parent / "test_models" / "models.py"
 
 
-def _find_model(models: list[ModelIR], class_name: str) -> ModelIR:
+def _get_model(models: list[ModelIR], class_name: str) -> ModelIR:
     for m in models:
         if m.class_name == class_name:
             return m
@@ -20,74 +20,70 @@ def _find_model(models: list[ModelIR], class_name: str) -> ModelIR:
 
 
 @pytest.fixture(scope="module")
-def all_models() -> list[ModelIR]:
+def model_irs() -> list[ModelIR]:
     return discover_models(str(_MODELS_FILE))
 
 
 @pytest.fixture
-def user_load_content(all_models, tmp_path):
-    user = _find_model(all_models, "User")
-    generate_load_options(user, all_models, tmp_path)
+def user_load_content(model_irs, tmp_path) -> str:
+    user = _get_model(model_irs, "User")
+    generate_load_options(user, model_irs, tmp_path)
     return (tmp_path / "user_load_options.py").read_text()
 
 
 @pytest.fixture
-def claim_load_content(all_models, tmp_path):
-    claim = _find_model(all_models, "Claim")
-    generate_load_options(claim, all_models, tmp_path)
+def claim_load_content(model_irs, tmp_path) -> str:
+    claim = _get_model(model_irs, "Claim")
+    generate_load_options(claim, model_irs, tmp_path)
     return (tmp_path / "claim_load_options.py").read_text()
 
 
 @pytest.fixture
-def category_load_content(all_models, tmp_path):
-    cat = _find_model(all_models, "Category")
-    generate_load_options(cat, all_models, tmp_path)
+def category_load_content(model_irs, tmp_path) -> str:
+    cat = _get_model(model_irs, "Category")
+    generate_load_options(cat, model_irs, tmp_path)
     return (tmp_path / "category_load_options.py").read_text()
 
 
-# ------------------------------------------------------------------
-# User load options
-# ------------------------------------------------------------------
+# ---- User load options ------------------------------------------------------
 
 def test_user_load_options_fields(user_load_content):
-    """UserLoadOptions should have policies and profile fields."""
-    assert "policies:" in user_load_content
-    assert "profile:" in user_load_content
+    """policies and profile fields are present in UserLoadOptions."""
+    lo_block = user_load_content.split("class UserLoadOptions")[1]
+    assert "policies:" in lo_block
+    assert "profile:" in lo_block
 
 
 def test_user_policies_nested_type(user_load_content):
-    """policies field should reference PolicyLoadOptions since Policy has relationships."""
-    assert "PolicyLoadOptions" in user_load_content
+    """policies field has PolicyLoadOptions type option (nested)."""
+    lo_block = user_load_content.split("class UserLoadOptions")[1]
+    assert "PolicyLoadOptions" in lo_block
 
 
-# ------------------------------------------------------------------
-# Claim load options (leaf)
-# ------------------------------------------------------------------
+# ---- Claim load options (leaf) ----------------------------------------------
 
 def test_claim_load_options_leaf(claim_load_content):
-    """Claim.policy should be LoadStrategy | None since Policy has relationships,
-    but Claim itself is a leaf. Check that the policy field exists."""
-    # Claim has a policy relationship. Policy has relationships (holder, claims),
-    # so it should get PolicyLoadOptions nesting.
-    assert "policy:" in claim_load_content
+    """Claim.policy is LoadStrategy | None (leaf with no deeper nesting)."""
+    lo_block = claim_load_content.split("class ClaimLoadOptions")[1]
+    # Policy has relationships (holder, claims), so it should have nested.
+    assert "policy:" in lo_block
 
 
-# ------------------------------------------------------------------
-# Category (self-referential)
-# ------------------------------------------------------------------
+# ---- Category self-referential ----------------------------------------------
 
 def test_category_self_referential(category_load_content):
-    """Category load options should handle self-referential relationships."""
-    assert "class CategoryLoadOptions" in category_load_content
-    assert "parent:" in category_load_content or "children:" in category_load_content
+    """Category load options handle self-referential relationship."""
+    lo_block = category_load_content.split("class CategoryLoadOptions")[1]
+    assert "parent:" in lo_block
+    assert "children:" in lo_block
+    # Self-referential: CategoryLoadOptions references itself
+    assert "CategoryLoadOptions" in lo_block
 
 
-# ------------------------------------------------------------------
-# LoadStrategy enum
-# ------------------------------------------------------------------
+# ---- LoadStrategy enum ------------------------------------------------------
 
 def test_load_strategy_enum(user_load_content):
-    """LoadStrategy enum should have SELECT_IN, JOINED, SUBQUERY."""
+    """LoadStrategy enum has SELECT_IN, JOINED, SUBQUERY."""
     assert "class LoadStrategy" in user_load_content
     assert "SELECT_IN" in user_load_content
     assert "JOINED" in user_load_content

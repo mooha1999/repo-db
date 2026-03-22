@@ -12,7 +12,7 @@ from repogen.generators.repo_generator import generate_repository
 _MODELS_FILE = Path(__file__).parent / "test_models" / "models.py"
 
 
-def _find_model(models: list[ModelIR], class_name: str) -> ModelIR:
+def _get_model(models: list[ModelIR], class_name: str) -> ModelIR:
     for m in models:
         if m.class_name == class_name:
             return m
@@ -20,13 +20,13 @@ def _find_model(models: list[ModelIR], class_name: str) -> ModelIR:
 
 
 @pytest.fixture(scope="module")
-def all_models() -> list[ModelIR]:
+def model_irs() -> list[ModelIR]:
     return discover_models(str(_MODELS_FILE))
 
 
 @pytest.fixture
-def user_repo_content(all_models, tmp_path):
-    user = _find_model(all_models, "User")
+def user_repo_content(model_irs, tmp_path) -> str:
+    user = _get_model(model_irs, "User")
     generate_repository(user, tmp_path, internals_path="generated", config={
         "generate_unique_lookups": True,
         "generate_hard_delete": True,
@@ -36,8 +36,8 @@ def user_repo_content(all_models, tmp_path):
 
 
 @pytest.fixture
-def policy_repo_content(all_models, tmp_path):
-    policy = _find_model(all_models, "Policy")
+def policy_repo_content(model_irs, tmp_path) -> str:
+    policy = _get_model(model_irs, "Policy")
     generate_repository(policy, tmp_path, internals_path="generated", config={
         "generate_unique_lookups": True,
         "generate_hard_delete": True,
@@ -47,8 +47,8 @@ def policy_repo_content(all_models, tmp_path):
 
 
 @pytest.fixture
-def tenant_policy_repo_content(all_models, tmp_path):
-    tp = _find_model(all_models, "TenantPolicy")
+def tenant_policy_repo_content(model_irs, tmp_path) -> str:
+    tp = _get_model(model_irs, "TenantPolicy")
     generate_repository(tp, tmp_path, internals_path="generated", config={
         "generate_unique_lookups": True,
         "generate_hard_delete": True,
@@ -57,92 +57,60 @@ def tenant_policy_repo_content(all_models, tmp_path):
     return (tmp_path / "tenant_policy_repository.py").read_text()
 
 
-# ------------------------------------------------------------------
-# User repo - soft delete
-# ------------------------------------------------------------------
+# ---- User soft-delete methods -----------------------------------------------
 
 def test_user_repo_has_soft_delete_methods(user_repo_content):
-    """User repo should have delete (soft), hard_delete, and restore methods."""
+    """User repo has delete, hard_delete, and restore methods."""
     assert "async def delete(" in user_repo_content
     assert "async def hard_delete(" in user_repo_content
     assert "async def restore(" in user_repo_content
 
 
 def test_user_repo_include_deleted_param(user_repo_content):
-    """get_by_id, get_many, and count should have include_deleted parameter."""
-    # Check in get_by_id
-    get_by_id_start = user_repo_content.index("async def get_by_id(")
-    get_many_start = user_repo_content.index("async def get_many(")
-    get_by_id_body = user_repo_content[get_by_id_start:get_many_start]
-    assert "include_deleted" in get_by_id_body
+    """include_deleted parameter is present in get_by_id, get_many, count."""
+    get_by_id_block = user_repo_content.split("async def get_by_id")[1].split("async def ")[0]
+    assert "include_deleted" in get_by_id_block
 
-    # Check in get_many
-    get_one_start = user_repo_content.index("async def get_one(")
-    get_many_body = user_repo_content[get_many_start:get_one_start]
-    assert "include_deleted" in get_many_body
+    get_many_block = user_repo_content.split("async def get_many")[1].split("async def ")[0]
+    assert "include_deleted" in get_many_block
 
-    # Check in count
-    count_start = user_repo_content.index("async def count(")
-    exists_start = user_repo_content.index("async def exists(")
-    count_body = user_repo_content[count_start:exists_start]
-    assert "include_deleted" in count_body
+    count_block = user_repo_content.split("async def count")[1].split("async def ")[0]
+    assert "include_deleted" in count_block
 
 
 def test_user_repo_get_by_email(user_repo_content):
-    """Unique column lookup method should be generated for email."""
+    """Unique column lookup method get_by_email is generated."""
     assert "async def get_by_email(" in user_repo_content
 
 
-# ------------------------------------------------------------------
-# Policy repo - no soft delete
-# ------------------------------------------------------------------
+# ---- Policy repo (no soft delete) ------------------------------------------
 
 def test_policy_repo_no_soft_delete(policy_repo_content):
-    """Policy repo should not have hard_delete, restore, or include_deleted."""
+    """Policy repo has no hard_delete, restore, or include_deleted."""
     assert "async def hard_delete(" not in policy_repo_content
     assert "async def restore(" not in policy_repo_content
     assert "include_deleted" not in policy_repo_content
 
 
-# ------------------------------------------------------------------
-# TenantPolicy repo - composite PK
-# ------------------------------------------------------------------
+# ---- TenantPolicy composite PK ---------------------------------------------
 
 def test_tenant_policy_repo_composite_pk(tenant_policy_repo_content):
-    """get_by_id should take both tenant_id and policy_number params."""
-    get_by_id_start = tenant_policy_repo_content.index("async def get_by_id(")
-    # Find the closing paren of get_by_id signature
-    next_method = tenant_policy_repo_content.index("async def get_many(")
-    signature = tenant_policy_repo_content[get_by_id_start:next_method]
-    assert "tenant_id:" in signature
-    assert "policy_number:" in signature
+    """get_by_id takes tenant_id and policy_number params."""
+    get_by_id_block = tenant_policy_repo_content.split("async def get_by_id")[1].split("async def ")[0]
+    assert "tenant_id" in get_by_id_block
+    assert "policy_number" in get_by_id_block
 
 
-# ------------------------------------------------------------------
-# CRUD methods
-# ------------------------------------------------------------------
+# ---- CRUD methods -----------------------------------------------------------
 
 def test_repo_has_all_crud_methods(user_repo_content):
-    """Repository should have all standard CRUD methods."""
-    expected_methods = [
-        "async def get_by_id(",
-        "async def get_many(",
-        "async def get_one(",
-        "async def create(",
-        "async def create_many(",
-        "async def update(",
-        "async def delete(",
-        "async def count(",
-        "async def exists(",
-    ]
-    for method in expected_methods:
-        assert method in user_repo_content, f"Missing method: {method}"
+    """Repository has all expected CRUD methods."""
+    for method in ("get_by_id", "get_many", "get_one", "create", "create_many", "update", "delete", "count", "exists"):
+        assert f"async def {method}(" in user_repo_content, f"Missing method: {method}"
 
 
-# ------------------------------------------------------------------
-# Header
-# ------------------------------------------------------------------
+# ---- Header -----------------------------------------------------------------
 
 def test_repo_file_has_header(user_repo_content):
-    """Generated file should start with the auto-generated header."""
+    """Generated file starts with auto-generated header."""
     assert user_repo_content.startswith("# AUTO-GENERATED by RepoGen")
