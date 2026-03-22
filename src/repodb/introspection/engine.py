@@ -111,22 +111,54 @@ def _get_relationship_direction(
     return RelationshipDirection.MANY_TO_ONE
 
 
+def _resolve_module_path(file_path: Path) -> str:
+    """Try to determine the proper Python module path for a file.
+
+    Walks up directories looking for a sys.path entry to compute the dotted
+    module path. Falls back to the file stem if no sys.path entry matches.
+    """
+    file_path = file_path.resolve()
+    # Check each sys.path entry to see if the file is underneath it
+    for sp in sys.path:
+        sp_resolved = Path(sp).resolve()
+        try:
+            relative = file_path.relative_to(sp_resolved)
+            # Convert path parts to dotted module name
+            parts = list(relative.with_suffix("").parts)
+            return ".".join(parts)
+        except ValueError:
+            continue
+    # Fall back to file stem
+    return file_path.stem
+
+
 def _import_module_from_path(file_path: Path) -> Any:
     """Import a Python module from a file path."""
-    module_name = file_path.stem
-    # Make a unique module name to avoid conflicts
-    unique_name = f"repodb_models_{module_name}"
+    file_path = file_path.resolve()
 
-    # Add parent directory to sys.path so relative imports work
-    parent_dir = str(file_path.parent)
-    if parent_dir not in sys.path:
-        sys.path.insert(0, parent_dir)
+    # Try to resolve module path BEFORE adding parent dir to sys.path,
+    # so we prefer existing importable paths (e.g. "tests.sample_models")
+    # over the bare stem ("sample_models").
+    module_name = _resolve_module_path(file_path)
 
-    spec = importlib.util.spec_from_file_location(unique_name, str(file_path))
+    # If no existing sys.path entry matched, add the parent directory
+    # and use the file stem.
+    if module_name == file_path.stem:
+        parent_dir = str(file_path.parent)
+        if parent_dir not in sys.path:
+            sys.path.insert(0, parent_dir)
+        # Re-resolve now that parent_dir is in sys.path
+        module_name = _resolve_module_path(file_path)
+
+    # Check if already imported
+    if module_name in sys.modules:
+        return sys.modules[module_name]
+
+    spec = importlib.util.spec_from_file_location(module_name, str(file_path))
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot import {file_path}")
     module = importlib.util.module_from_spec(spec)
-    sys.modules[unique_name] = module
+    sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -183,6 +215,10 @@ def introspect_model(model_cls: type) -> ModelIR:
     columns: list[ColumnIR] = []
     pk_columns: list[str] = []
 
+    # Determine PK column count first
+    pk_col_names_set = {col.name for col in mapper.primary_key}
+    is_composite_pk = len(pk_col_names_set) > 1
+
     for col_attr in mapper.column_attrs:
         for col in col_attr.columns:
             py_type, py_module, is_enum, enum_name, enum_mod, enum_members = (
@@ -194,21 +230,24 @@ def introspect_model(model_cls: type) -> ModelIR:
             if is_pk:
                 pk_columns.append(col.name)
                 # Check autoincrement
-                if hasattr(col, "autoincrement") and col.autoincrement is True:
+                if hasattr(col, "identity") and col.identity is not None:
                     is_autoincrement = True
-                elif hasattr(col, "identity") and col.identity is not None:
+                elif hasattr(col, "autoincrement") and col.autoincrement is True:
                     is_autoincrement = True
-                # Integer PKs default to autoincrement in SQLAlchemy
-                elif isinstance(
-                    col.type,
-                    (
-                        sqlalchemy.Integer,
-                        sqlalchemy.BigInteger,
-                        sqlalchemy.SmallInteger,
-                    ),
+                # Only default to autoincrement for SINGLE integer PKs
+                elif (
+                    not is_composite_pk
+                    and isinstance(
+                        col.type,
+                        (
+                            sqlalchemy.Integer,
+                            sqlalchemy.BigInteger,
+                            sqlalchemy.SmallInteger,
+                        ),
+                    )
+                    and col.autoincrement != False  # noqa: E712
                 ):
-                    if col.autoincrement != False:  # noqa: E712
-                        is_autoincrement = True
+                    is_autoincrement = True
 
             has_default = col.default is not None
             has_server_default = col.server_default is not None

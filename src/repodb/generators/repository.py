@@ -9,7 +9,6 @@ from .utils import python_type_to_annotation
 def generate_repository(model: ModelIR) -> str:
     """Generate concrete repository source code for a model."""
     imports: set[str] = set()
-    imports.add("from __future__ import annotations")
     imports.add("from ..base import BaseRepository")
 
     # Import the model
@@ -20,6 +19,18 @@ def generate_repository(model: ModelIR) -> str:
     imports.add(f"from .filters import {model.class_name}Filter")
     imports.add(f"from .load_options import {model.class_name}LoadOptions")
 
+    # Collect PK model info before writing imports
+    pk_model_name = None
+    pk_lines: list[str] = []
+    if model.has_composite_pk:
+        pk_model_name = f"{model.class_name}PK"
+        imports.add("from pydantic import BaseModel")
+        pk_lines.append(f"class {pk_model_name}(BaseModel):")
+        for col in model.pk_columns:
+            type_str, type_imports = python_type_to_annotation(col)
+            imports.update(type_imports)
+            pk_lines.append(f"    {col.name}: {type_str}")
+
     lines = [
         '"""Auto-generated repository for {name}. Do not edit manually."""'.format(
             name=model.class_name
@@ -29,22 +40,14 @@ def generate_repository(model: ModelIR) -> str:
         "",
     ]
 
-    imports.discard("from __future__ import annotations")
     for imp in sorted(imports):
         lines.append(imp)
 
-    # Generate PK model for composite keys
-    pk_model_name = None
-    if model.has_composite_pk:
-        pk_model_name = f"{model.class_name}PK"
-        imports.add("from pydantic import BaseModel")
+    # Add PK model if composite keys
+    if pk_lines:
         lines.append("")
         lines.append("")
-        lines.append(f"class {pk_model_name}(BaseModel):")
-        for col in model.pk_columns:
-            type_str, type_imports = python_type_to_annotation(col)
-            imports.update(type_imports)
-            lines.append(f"    {col.name}: {type_str}")
+        lines.extend(pk_lines)
 
     lines.append("")
     lines.append("")

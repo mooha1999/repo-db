@@ -1,201 +1,140 @@
-"""Integration tests for the repository layer."""
+"""Integration tests for the repository layer.
+
+These tests are "honest" end-to-end tests that:
+1. Run the repodb CLI to generate repository code from sample_models.py
+2. Dynamically import the generated modules
+3. Test the generated repositories against a real async SQLite database
+"""
 
 from __future__ import annotations
 
+import importlib
+import sys
+import tempfile
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
+import pytest_asyncio
+from click.testing import CliRunner
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
+from repodb.cli import main
 from tests.sample_models import (
-    Policy,
-    PolicyRider,
+    Base,
     PolicyStatus,
-    User,
     UserStatus,
 )
 
-# We need to generate and import repos, but for integration tests
-# we'll directly test the base repository mechanics by creating
-# inline test repos.
 
-import sys
-import os
-
-# Add parent to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-from pydantic import BaseModel
+SAMPLE_MODELS = Path(__file__).parent / "sample_models.py"
 
 
-# --- Inline DTOs for testing ---
+# ---------------------------------------------------------------------------
+# Fixture: generate code once, import generated modules
+# ---------------------------------------------------------------------------
 
 
-class UserCreate(BaseModel):
-    username: str
-    email: str
-    status: UserStatus | None = None
+@pytest.fixture(scope="session")
+def generated_package() -> Path:
+    """Run the CLI to generate code and return the output directory.
+
+    This fixture runs once per test session. The generated code lives in a
+    temporary directory that persists for the entire session.
+    """
+    tmpdir = tempfile.mkdtemp(prefix="repodb_test_")
+    output = Path(tmpdir) / "generated"
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["generate", "--models", str(SAMPLE_MODELS), "--output", str(output)]
+    )
+    assert result.exit_code == 0, f"CLI failed:\n{result.output}"
+
+    # Add the parent of the generated package to sys.path so that
+    # `import generated` works with all relative imports intact.
+    parent_dir = str(output.parent)
+    if parent_dir not in sys.path:
+        sys.path.insert(0, parent_dir)
+
+    # Force-import the generated package (and all sub-packages)
+    importlib.import_module("generated")
+
+    return output
 
 
-class UserUpdate(BaseModel):
-    id: int
-    username: str | None = None
-    email: str | None = None
-    status: UserStatus | None = None
+@pytest.fixture(scope="session")
+def gen(generated_package: Path) -> ModuleType:
+    """Return the top-level generated package module."""
+    return sys.modules["generated"]
 
 
-class UserFilter(BaseModel):
-    username: "StringFilter | None" = None
-    email: "StringFilter | None" = None
-    status: "UserStatusFilter | None" = None
+# ---------------------------------------------------------------------------
+# Database fixtures
+# ---------------------------------------------------------------------------
 
 
-class StringFilter(BaseModel):
-    eq: str | None = None
-    neq: str | None = None
-    like: str | None = None
-    ilike: str | None = None
-    in_: list[str] | None = None
-    not_in: list[str] | None = None
+@pytest_asyncio.fixture
+async def async_engine() -> AsyncEngine:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield engine  # type: ignore[misc]
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
 
 
-class IntFilter(BaseModel):
-    eq: int | None = None
-    neq: int | None = None
-    gt: int | None = None
-    gte: int | None = None
-    lt: int | None = None
-    lte: int | None = None
-    in_: list[int] | None = None
-    not_in: list[int] | None = None
+@pytest_asyncio.fixture
+async def session(async_engine: AsyncEngine):
+    factory = async_sessionmaker(async_engine, expire_on_commit=False)
+    async with factory() as sess:
+        yield sess
 
 
-class NumericFilter(BaseModel):
-    eq: Decimal | None = None
-    neq: Decimal | None = None
-    gt: Decimal | None = None
-    gte: Decimal | None = None
-    lt: Decimal | None = None
-    lte: Decimal | None = None
-    in_: list[Decimal] | None = None
-    not_in: list[Decimal] | None = None
+# ---------------------------------------------------------------------------
+# Helper to grab generated classes by model name
+# ---------------------------------------------------------------------------
 
 
-class UserStatusFilter(BaseModel):
-    eq: UserStatus | None = None
-    neq: UserStatus | None = None
-    in_: list[UserStatus] | None = None
-    not_in: list[UserStatus] | None = None
+def _get_classes(model_name: str) -> dict:
+    """Return a dict of generated classes for a model."""
+    snake = _to_snake(model_name)
+    pkg = sys.modules.get(f"generated.{snake}")
+    assert pkg is not None, f"generated.{snake} not found in sys.modules"
+    return {
+        "Repository": getattr(pkg, f"{model_name}Repository"),
+        "Create": getattr(pkg, f"{model_name}Create"),
+        "Update": getattr(pkg, f"{model_name}Update"),
+        "Filter": getattr(pkg, f"{model_name}Filter"),
+        "LoadOptions": getattr(pkg, f"{model_name}LoadOptions"),
+    }
 
 
-class UserLoadOptions(BaseModel):
-    load_strategy: "LoadStrategy | None" = None
-    policies: "bool | None" = None
-    profile: "bool | None" = None
+def _to_snake(name: str) -> str:
+    result: list[str] = []
+    for i, c in enumerate(name):
+        if c.isupper() and i > 0:
+            result.append("_")
+        result.append(c.lower())
+    return "".join(result)
 
 
-class PolicyCreate(BaseModel):
-    name: str
-    premium: Decimal
-    status: PolicyStatus | None = None
-    user_id: int
-
-
-class PolicyUpdate(BaseModel):
-    id: int
-    name: str | None = None
-    premium: Decimal | None = None
-    status: PolicyStatus | None = None
-    user_id: int | None = None
-
-
-class PolicyFilter(BaseModel):
-    name: StringFilter | None = None
-    premium: NumericFilter | None = None
-    user_id: IntFilter | None = None
-
-
-class PolicyLoadOptions(BaseModel):
-    load_strategy: "LoadStrategy | None" = None
-    claims: "bool | None" = None
-    user: "bool | None" = None
-    tags: "bool | None" = None
-
-
-class PolicyRiderPK(BaseModel):
-    policy_id: int
-    rider_id: int
-
-
-class PolicyRiderCreate(BaseModel):
-    policy_id: int
-    rider_id: int
-    name: str
-    extra_premium: Decimal
-
-
-class PolicyRiderUpdate(BaseModel):
-    policy_id: int
-    rider_id: int
-    name: str | None = None
-    extra_premium: Decimal | None = None
-
-
-class PolicyRiderFilter(BaseModel):
-    pass
-
-
-class PolicyRiderLoadOptions(BaseModel):
-    load_strategy: "LoadStrategy | None" = None
-
-
-# We need to import from generated base, but since it's a template string,
-# we'll exec it to get the classes
-
-import importlib.util
-import tempfile
-from pathlib import Path
-
-from repodb.generators.base_repo_template import BASE_REPO_TEMPLATE
-
-
-# Create a temp module from the base template
-_temp_dir = tempfile.mkdtemp()
-_base_path = Path(_temp_dir) / "base.py"
-_base_path.write_text(BASE_REPO_TEMPLATE)
-_spec = importlib.util.spec_from_file_location("test_base", str(_base_path))
-_base_mod = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_base_mod)
-
-BaseRepository = _base_mod.BaseRepository
-LoadStrategy = _base_mod.LoadStrategy
-
-
-# --- Test Repositories ---
-
-
-class UserRepository(BaseRepository):
-    model = User
-    soft_deletable = True
-
-
-class PolicyRepository(BaseRepository):
-    model = Policy
-    soft_deletable = True
-
-
-class PolicyRiderRepository(BaseRepository):
-    model = PolicyRider
-    soft_deletable = False
-
-
-# --- Tests ---
+# ===========================================================================
+# Tests — all use generated code imported from CLI output
+# ===========================================================================
 
 
 @pytest.mark.asyncio
-async def test_create_user(session: AsyncSession):
-    repo = UserRepository(session)
-    dto = UserCreate(username="alice", email="alice@example.com")
+async def test_create_user(generated_package: Path, session: AsyncSession):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
+    dto = classes["Create"](username="alice", email="alice@example.com")
     user = await repo.create(dto)
     assert user.id is not None
     assert user.username == "alice"
@@ -204,10 +143,12 @@ async def test_create_user(session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_get_by_id(session: AsyncSession):
-    repo = UserRepository(session)
-    dto = UserCreate(username="bob", email="bob@example.com")
-    created = await repo.create(dto)
+async def test_get_by_id(generated_package: Path, session: AsyncSession):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
+    created = await repo.create(
+        classes["Create"](username="bob", email="bob@example.com")
+    )
 
     fetched = await repo.get_by_id(created.id)
     assert fetched is not None
@@ -215,19 +156,21 @@ async def test_get_by_id(session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_get_by_id_not_found(session: AsyncSession):
-    repo = UserRepository(session)
+async def test_get_by_id_not_found(generated_package: Path, session: AsyncSession):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
     result = await repo.get_by_id(99999)
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_create_many(session: AsyncSession):
-    repo = UserRepository(session)
+async def test_create_many(generated_package: Path, session: AsyncSession):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
     dtos = [
-        UserCreate(username="user1", email="user1@example.com"),
-        UserCreate(username="user2", email="user2@example.com"),
-        UserCreate(username="user3", email="user3@example.com"),
+        classes["Create"](username="user1", email="user1@example.com"),
+        classes["Create"](username="user2", email="user2@example.com"),
+        classes["Create"](username="user3", email="user3@example.com"),
     ]
     users = await repo.create_many(dtos)
     assert len(users) == 3
@@ -235,22 +178,26 @@ async def test_create_many(session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_update(session: AsyncSession):
-    repo = UserRepository(session)
+async def test_update(generated_package: Path, session: AsyncSession):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
     user = await repo.create(
-        UserCreate(username="charlie", email="charlie@example.com")
+        classes["Create"](username="charlie", email="charlie@example.com")
     )
 
-    updated = await repo.update(UserUpdate(id=user.id, username="charles"))
+    updated = await repo.update(classes["Update"](id=user.id, username="charles"))
     assert updated is not None
     assert updated.username == "charles"
-    assert updated.email == "charlie@example.com"  # unchanged
+    assert updated.email == "charlie@example.com"
 
 
 @pytest.mark.asyncio
-async def test_delete(session: AsyncSession):
-    repo = UserRepository(session)
-    user = await repo.create(UserCreate(username="dave", email="dave@example.com"))
+async def test_delete(generated_package: Path, session: AsyncSession):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
+    user = await repo.create(
+        classes["Create"](username="dave", email="dave@example.com")
+    )
 
     result = await repo.delete(user.id)
     assert result is True
@@ -260,9 +207,12 @@ async def test_delete(session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_soft_delete(session: AsyncSession):
-    repo = UserRepository(session)
-    user = await repo.create(UserCreate(username="eve", email="eve@example.com"))
+async def test_soft_delete(generated_package: Path, session: AsyncSession):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
+    user = await repo.create(
+        classes["Create"](username="eve", email="eve@example.com")
+    )
 
     deleted = await repo.soft_delete(user.id)
     assert deleted is not None
@@ -278,9 +228,12 @@ async def test_soft_delete(session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_restore(session: AsyncSession):
-    repo = UserRepository(session)
-    user = await repo.create(UserCreate(username="frank", email="frank@example.com"))
+async def test_restore(generated_package: Path, session: AsyncSession):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
+    user = await repo.create(
+        classes["Create"](username="frank", email="frank@example.com")
+    )
 
     await repo.soft_delete(user.id)
     restored = await repo.restore(user.id)
@@ -292,21 +245,25 @@ async def test_restore(session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_get_many_basic(session: AsyncSession):
-    repo = UserRepository(session)
-    await repo.create(UserCreate(username="x1", email="x1@example.com"))
-    await repo.create(UserCreate(username="x2", email="x2@example.com"))
+async def test_get_many_basic(generated_package: Path, session: AsyncSession):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
+    await repo.create(classes["Create"](username="x1", email="x1@example.com"))
+    await repo.create(classes["Create"](username="x2", email="x2@example.com"))
 
     users = await repo.get_many()
     assert len(users) >= 2
 
 
 @pytest.mark.asyncio
-async def test_get_many_with_limit_offset(session: AsyncSession):
-    repo = UserRepository(session)
+async def test_get_many_with_limit_offset(
+    generated_package: Path, session: AsyncSession
+):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
     for i in range(5):
         await repo.create(
-            UserCreate(username=f"paged_{i}", email=f"paged_{i}@example.com")
+            classes["Create"](username=f"paged_{i}", email=f"paged_{i}@example.com")
         )
 
     page1 = await repo.get_many(limit=2, offset=0, order_by="username")
@@ -317,220 +274,306 @@ async def test_get_many_with_limit_offset(session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_filter_string_eq(session: AsyncSession):
-    repo = UserRepository(session)
-    await repo.create(UserCreate(username="filter_test", email="ft@example.com"))
-    await repo.create(UserCreate(username="other", email="other@example.com"))
+async def test_filter_string_eq(generated_package: Path, session: AsyncSession):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
+    base_mod = sys.modules["generated.base"]
+    StringFilter = base_mod.StringFilter
+
+    await repo.create(
+        classes["Create"](username="filter_test", email="ft@example.com")
+    )
+    await repo.create(
+        classes["Create"](username="other", email="other@example.com")
+    )
 
     results = await repo.get_many(
-        filters=UserFilter(username=StringFilter(eq="filter_test"))
+        filters=classes["Filter"](username=StringFilter(eq="filter_test"))
     )
     assert len(results) == 1
     assert results[0].username == "filter_test"
 
 
 @pytest.mark.asyncio
-async def test_filter_string_like(session: AsyncSession):
-    repo = UserRepository(session)
-    await repo.create(UserCreate(username="like_test_1", email="lt1@example.com"))
-    await repo.create(UserCreate(username="like_test_2", email="lt2@example.com"))
-    await repo.create(UserCreate(username="no_match", email="nm@example.com"))
+async def test_filter_string_like(generated_package: Path, session: AsyncSession):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
+    base_mod = sys.modules["generated.base"]
+    StringFilter = base_mod.StringFilter
 
-    results = await repo.get_many(
-        filters=UserFilter(username=StringFilter(like="like_test%"))
-    )
-    assert len(results) == 2
-
-
-@pytest.mark.asyncio
-async def test_filter_string_in(session: AsyncSession):
-    repo = UserRepository(session)
-    await repo.create(UserCreate(username="in_1", email="in1@example.com"))
-    await repo.create(UserCreate(username="in_2", email="in2@example.com"))
-    await repo.create(UserCreate(username="in_3", email="in3@example.com"))
-
-    results = await repo.get_many(
-        filters=UserFilter(username=StringFilter(in_=["in_1", "in_3"]))
-    )
-    assert len(results) == 2
-
-
-@pytest.mark.asyncio
-async def test_filter_enum(session: AsyncSession):
-    repo = UserRepository(session)
     await repo.create(
-        UserCreate(
+        classes["Create"](username="like_test_1", email="lt1@example.com")
+    )
+    await repo.create(
+        classes["Create"](username="like_test_2", email="lt2@example.com")
+    )
+    await repo.create(
+        classes["Create"](username="no_match", email="nm@example.com")
+    )
+
+    results = await repo.get_many(
+        filters=classes["Filter"](username=StringFilter(like="like_test%"))
+    )
+    assert len(results) == 2
+
+
+@pytest.mark.asyncio
+async def test_filter_string_in(generated_package: Path, session: AsyncSession):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
+    base_mod = sys.modules["generated.base"]
+    StringFilter = base_mod.StringFilter
+
+    await repo.create(classes["Create"](username="in_1", email="in1@example.com"))
+    await repo.create(classes["Create"](username="in_2", email="in2@example.com"))
+    await repo.create(classes["Create"](username="in_3", email="in3@example.com"))
+
+    results = await repo.get_many(
+        filters=classes["Filter"](username=StringFilter(in_=["in_1", "in_3"]))
+    )
+    assert len(results) == 2
+
+
+@pytest.mark.asyncio
+async def test_filter_enum(generated_package: Path, session: AsyncSession):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
+    # Get the generated enum filter from the filters module
+    filters_mod = sys.modules["generated.user.filters"]
+    UserStatusFilter = filters_mod.UserStatusFilter
+
+    await repo.create(
+        classes["Create"](
             username="active_user", email="au@example.com", status=UserStatus.ACTIVE
         )
     )
     await repo.create(
-        UserCreate(
+        classes["Create"](
             username="banned_user", email="bu@example.com", status=UserStatus.BANNED
         )
     )
 
     results = await repo.get_many(
-        filters=UserFilter(status=UserStatusFilter(eq=UserStatus.BANNED))
+        filters=classes["Filter"](status=UserStatusFilter(eq=UserStatus.BANNED))
     )
     assert len(results) == 1
     assert results[0].username == "banned_user"
 
 
 @pytest.mark.asyncio
-async def test_count(session: AsyncSession):
-    repo = UserRepository(session)
-    await repo.create(UserCreate(username="cnt1", email="cnt1@example.com"))
-    await repo.create(UserCreate(username="cnt2", email="cnt2@example.com"))
+async def test_count(generated_package: Path, session: AsyncSession):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
+    await repo.create(classes["Create"](username="cnt1", email="cnt1@example.com"))
+    await repo.create(classes["Create"](username="cnt2", email="cnt2@example.com"))
 
     count = await repo.count()
     assert count >= 2
 
 
 @pytest.mark.asyncio
-async def test_count_with_filter(session: AsyncSession):
-    repo = UserRepository(session)
-    await repo.create(UserCreate(username="cnt_f1", email="cntf1@example.com"))
-    await repo.create(UserCreate(username="cnt_f2", email="cntf2@example.com"))
+async def test_count_with_filter(generated_package: Path, session: AsyncSession):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
+    base_mod = sys.modules["generated.base"]
+    StringFilter = base_mod.StringFilter
 
-    count = await repo.count(filters=UserFilter(username=StringFilter(eq="cnt_f1")))
+    await repo.create(classes["Create"](username="cnt_f1", email="cntf1@example.com"))
+    await repo.create(classes["Create"](username="cnt_f2", email="cntf2@example.com"))
+
+    count = await repo.count(
+        filters=classes["Filter"](username=StringFilter(eq="cnt_f1"))
+    )
     assert count == 1
 
 
 @pytest.mark.asyncio
-async def test_soft_delete_excluded_from_count(session: AsyncSession):
-    repo = UserRepository(session)
-    user = await repo.create(UserCreate(username="cnt_sd", email="cntsd@example.com"))
+async def test_soft_delete_excluded_from_count(
+    generated_package: Path, session: AsyncSession
+):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
+    base_mod = sys.modules["generated.base"]
+    StringFilter = base_mod.StringFilter
+
+    user = await repo.create(
+        classes["Create"](username="cnt_sd", email="cntsd@example.com")
+    )
 
     count_before = await repo.count(
-        filters=UserFilter(username=StringFilter(eq="cnt_sd"))
+        filters=classes["Filter"](username=StringFilter(eq="cnt_sd"))
     )
     assert count_before == 1
 
     await repo.soft_delete(user.id)
     count_after = await repo.count(
-        filters=UserFilter(username=StringFilter(eq="cnt_sd"))
+        filters=classes["Filter"](username=StringFilter(eq="cnt_sd"))
     )
     assert count_after == 0
 
     count_inc = await repo.count(
-        filters=UserFilter(username=StringFilter(eq="cnt_sd")),
+        filters=classes["Filter"](username=StringFilter(eq="cnt_sd")),
         include_deleted=True,
     )
     assert count_inc == 1
 
 
 @pytest.mark.asyncio
-async def test_ordering(session: AsyncSession):
-    repo = UserRepository(session)
-    await repo.create(UserCreate(username="zzz_order", email="z@example.com"))
-    await repo.create(UserCreate(username="aaa_order", email="a@example.com"))
+async def test_ordering(generated_package: Path, session: AsyncSession):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
+    base_mod = sys.modules["generated.base"]
+    StringFilter = base_mod.StringFilter
+
+    await repo.create(
+        classes["Create"](username="zzz_order", email="z@example.com")
+    )
+    await repo.create(
+        classes["Create"](username="aaa_order", email="a@example.com")
+    )
 
     asc_results = await repo.get_many(
-        filters=UserFilter(username=StringFilter(like="%_order")),
+        filters=classes["Filter"](username=StringFilter(like="%_order")),
         order_by="username",
     )
     assert asc_results[0].username == "aaa_order"
 
     desc_results = await repo.get_many(
-        filters=UserFilter(username=StringFilter(like="%_order")),
+        filters=classes["Filter"](username=StringFilter(like="%_order")),
         order_by=[("username", "desc")],
     )
     assert desc_results[0].username == "zzz_order"
 
 
 @pytest.mark.asyncio
-async def test_policy_with_numeric_filter(session: AsyncSession):
-    user_repo = UserRepository(session)
+async def test_policy_with_numeric_filter(
+    generated_package: Path, session: AsyncSession
+):
+    user_classes = _get_classes("User")
+    policy_classes = _get_classes("Policy")
+    base_mod = sys.modules["generated.base"]
+    NumericFilter = base_mod.NumericFilter
+
+    user_repo = user_classes["Repository"](session)
     user = await user_repo.create(
-        UserCreate(username="policy_owner", email="po@example.com")
+        user_classes["Create"](username="policy_owner", email="po@example.com")
     )
 
-    repo = PolicyRepository(session)
-    await repo.create(
-        PolicyCreate(name="cheap", premium=Decimal("100.00"), user_id=user.id)
+    policy_repo = policy_classes["Repository"](session)
+    await policy_repo.create(
+        policy_classes["Create"](
+            name="cheap", premium=Decimal("100.00"), user_id=user.id
+        )
     )
-    await repo.create(
-        PolicyCreate(name="expensive", premium=Decimal("5000.00"), user_id=user.id)
+    await policy_repo.create(
+        policy_classes["Create"](
+            name="expensive", premium=Decimal("5000.00"), user_id=user.id
+        )
     )
 
-    results = await repo.get_many(
-        filters=PolicyFilter(premium=NumericFilter(gt=Decimal("1000.00")))
+    results = await policy_repo.get_many(
+        filters=policy_classes["Filter"](
+            premium=NumericFilter(gt=Decimal("1000.00"))
+        )
     )
     assert len(results) == 1
     assert results[0].name == "expensive"
 
 
 @pytest.mark.asyncio
-async def test_load_options_relationships(session: AsyncSession):
-    user_repo = UserRepository(session)
+async def test_load_options_relationships(
+    generated_package: Path, session: AsyncSession
+):
+    user_classes = _get_classes("User")
+    policy_classes = _get_classes("Policy")
+
+    user_repo = user_classes["Repository"](session)
     user = await user_repo.create(
-        UserCreate(username="loader", email="loader@example.com")
+        user_classes["Create"](username="loader", email="loader@example.com")
     )
 
-    policy_repo = PolicyRepository(session)
+    policy_repo = policy_classes["Repository"](session)
     await policy_repo.create(
-        PolicyCreate(name="pol1", premium=Decimal("100.00"), user_id=user.id)
+        policy_classes["Create"](
+            name="pol1", premium=Decimal("100.00"), user_id=user.id
+        )
     )
 
-    # Load user with policies
+    # Load user with policies eagerly
     loaded = await user_repo.get_by_id(
         user.id,
-        load_options=UserLoadOptions(policies=True),
+        load_options=user_classes["LoadOptions"](policies=True),
     )
     assert loaded is not None
     assert len(loaded.policies) == 1
 
 
 @pytest.mark.asyncio
-async def test_composite_pk_operations(session: AsyncSession):
-    # First create a user and policy
-    user_repo = UserRepository(session)
+async def test_composite_pk_operations(
+    generated_package: Path, session: AsyncSession
+):
+    user_classes = _get_classes("User")
+    policy_classes = _get_classes("Policy")
+    rider_classes = _get_classes("PolicyRider")
+
+    # Get the generated PK model
+    rider_repo_mod = sys.modules["generated.policy_rider.repository"]
+    PolicyRiderPK = rider_repo_mod.PolicyRiderPK
+
+    # Create prerequisite data
+    user_repo = user_classes["Repository"](session)
     user = await user_repo.create(
-        UserCreate(username="rider_owner", email="ro@example.com")
+        user_classes["Create"](username="rider_owner", email="ro@example.com")
     )
 
-    policy_repo = PolicyRepository(session)
+    policy_repo = policy_classes["Repository"](session)
     policy = await policy_repo.create(
-        PolicyCreate(name="rider_policy", premium=Decimal("500.00"), user_id=user.id)
+        policy_classes["Create"](
+            name="rider_policy", premium=Decimal("500.00"), user_id=user.id
+        )
     )
 
-    repo = PolicyRiderRepository(session)
-    dto = PolicyRiderCreate(
+    # Test create with composite PK
+    rider_repo = rider_classes["Repository"](session)
+    dto = rider_classes["Create"](
         policy_id=policy.id,
         rider_id=1,
         name="Extra Coverage",
         extra_premium=Decimal("50.00"),
     )
-    rider = await repo.create(dto)
+    rider = await rider_repo.create(dto)
     assert rider.policy_id == policy.id
     assert rider.rider_id == 1
 
     # Get by composite PK
     pk = PolicyRiderPK(policy_id=policy.id, rider_id=1)
-    fetched = await repo.get_by_id(pk)
+    fetched = await rider_repo.get_by_id(pk)
     assert fetched is not None
     assert fetched.name == "Extra Coverage"
 
     # Update by composite PK
-    updated = await repo.update(
-        PolicyRiderUpdate(policy_id=policy.id, rider_id=1, name="Updated Coverage")
+    updated = await rider_repo.update(
+        rider_classes["Update"](
+            policy_id=policy.id, rider_id=1, name="Updated Coverage"
+        )
     )
     assert updated is not None
     assert updated.name == "Updated Coverage"
 
     # Delete by composite PK
-    result = await repo.delete(pk)
+    result = await rider_repo.delete(pk)
     assert result is True
 
-    fetched_after = await repo.get_by_id(pk)
+    fetched_after = await rider_repo.get_by_id(pk)
     assert fetched_after is None
 
 
 @pytest.mark.asyncio
-async def test_create_with_enum(session: AsyncSession):
-    repo = UserRepository(session)
+async def test_create_with_enum(generated_package: Path, session: AsyncSession):
+    classes = _get_classes("User")
+    repo = classes["Repository"](session)
     user = await repo.create(
-        UserCreate(
+        classes["Create"](
             username="enum_user", email="eu@example.com", status=UserStatus.BANNED
         )
     )
@@ -539,3 +582,65 @@ async def test_create_with_enum(session: AsyncSession):
     fetched = await repo.get_by_id(user.id)
     assert fetched is not None
     assert fetched.status == UserStatus.BANNED
+
+
+@pytest.mark.asyncio
+async def test_policy_soft_delete_lifecycle(
+    generated_package: Path, session: AsyncSession
+):
+    """Test the full soft-delete lifecycle on a generated Policy repository."""
+    user_classes = _get_classes("User")
+    policy_classes = _get_classes("Policy")
+
+    user_repo = user_classes["Repository"](session)
+    user = await user_repo.create(
+        user_classes["Create"](username="sd_owner", email="sd@example.com")
+    )
+
+    policy_repo = policy_classes["Repository"](session)
+    policy = await policy_repo.create(
+        policy_classes["Create"](
+            name="to_delete",
+            premium=Decimal("200.00"),
+            user_id=user.id,
+            status=PolicyStatus.ACTIVE,
+        )
+    )
+
+    # Soft delete
+    deleted = await policy_repo.soft_delete(policy.id)
+    assert deleted is not None
+    assert deleted.deleted_at is not None
+
+    # Not visible in normal queries
+    assert await policy_repo.get_by_id(policy.id) is None
+
+    # Visible with include_deleted
+    found = await policy_repo.get_by_id(policy.id, include_deleted=True)
+    assert found is not None
+
+    # Restore
+    restored = await policy_repo.restore(policy.id)
+    assert restored is not None
+    assert restored.deleted_at is None
+
+    # Visible again
+    found_again = await policy_repo.get_by_id(policy.id)
+    assert found_again is not None
+    assert found_again.name == "to_delete"
+
+
+@pytest.mark.asyncio
+async def test_non_soft_deletable_model_raises(
+    generated_package: Path, session: AsyncSession
+):
+    """Tag model has no deleted_at — soft_delete should raise."""
+    classes = _get_classes("Tag")
+    repo = classes["Repository"](session)
+    tag = await repo.create(classes["Create"](name="test-tag"))
+
+    with pytest.raises(NotImplementedError):
+        await repo.soft_delete(tag.id)
+
+    with pytest.raises(NotImplementedError):
+        await repo.restore(tag.id)
