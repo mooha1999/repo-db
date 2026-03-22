@@ -1,95 +1,115 @@
-"""Tests for load options generation."""
+"""Tests for load options generation.
 
+These tests compile and import generated load option modules, then verify
+class structure and LoadStrategy enum through actual inspection.
+"""
 from __future__ import annotations
 
-from pathlib import Path
+import py_compile
+from dataclasses import fields as dc_fields
+from enum import Enum
 
 import pytest
 
-from repogen.introspection.engine import discover_models
-from repogen.introspection.ir import ModelIR
-from repogen.generators.loading_generator import generate_load_options
 
-_MODELS_FILE = Path(__file__).parent / "test_models" / "models.py"
-
-
-def _get_model(models: list[ModelIR], class_name: str) -> ModelIR:
-    for m in models:
-        if m.class_name == class_name:
-            return m
-    raise ValueError(f"Model {class_name!r} not found")
+# ---------------------------------------------------------------------------
+# Syntax / compile checks
+# ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def model_irs() -> list[ModelIR]:
-    return discover_models(str(_MODELS_FILE))
+def test_user_load_options_compile(generated_package):
+    """user_load_options.py has no syntax errors."""
+    path = generated_package / "user_load_options.py"
+    assert path.exists()
+    py_compile.compile(str(path), doraise=True)
 
 
-@pytest.fixture
-def user_load_content(model_irs: list[ModelIR], tmp_path: Path) -> str:
-    user = _get_model(model_irs, "User")
-    generate_load_options(user, model_irs, tmp_path)
-    return (tmp_path / "user_load_options.py").read_text()
+def test_category_load_options_compile(generated_package):
+    """category_load_options.py (self-referential) has no syntax errors."""
+    path = generated_package / "category_load_options.py"
+    assert path.exists()
+    py_compile.compile(str(path), doraise=True)
 
 
-@pytest.fixture
-def claim_load_content(model_irs: list[ModelIR], tmp_path: Path) -> str:
-    claim = _get_model(model_irs, "Claim")
-    generate_load_options(claim, model_irs, tmp_path)
-    return (tmp_path / "claim_load_options.py").read_text()
+def test_claim_load_options_compile(generated_package):
+    """claim_load_options.py has no syntax errors."""
+    path = generated_package / "claim_load_options.py"
+    assert path.exists()
+    py_compile.compile(str(path), doraise=True)
 
 
-@pytest.fixture
-def category_load_content(model_irs: list[ModelIR], tmp_path: Path) -> str:
-    cat = _get_model(model_irs, "Category")
-    generate_load_options(cat, model_irs, tmp_path)
-    return (tmp_path / "category_load_options.py").read_text()
+# ---------------------------------------------------------------------------
+# Import checks
+# ---------------------------------------------------------------------------
 
 
-# ---- User load options ------------------------------------------------------
+def test_user_load_options_importable(gen_import):
+    """user_load_options module has UserLoadOptions and LoadStrategy."""
+    mod = gen_import("user_load_options")
+    assert hasattr(mod, "UserLoadOptions")
+    assert hasattr(mod, "LoadStrategy")
 
 
-def test_user_load_options_fields(user_load_content: str):
-    """policies and profile fields are present in UserLoadOptions."""
-    lo_block = user_load_content.split("class UserLoadOptions")[1]
-    assert "policies:" in lo_block
-    assert "profile:" in lo_block
+def test_load_strategy_enum_values(gen_import):
+    """LoadStrategy enum has SELECT_IN, JOINED, SUBQUERY members."""
+    LoadStrategy = gen_import("user_load_options").LoadStrategy
+    assert issubclass(LoadStrategy, Enum)
+    assert hasattr(LoadStrategy, "SELECT_IN")
+    assert hasattr(LoadStrategy, "JOINED")
+    assert hasattr(LoadStrategy, "SUBQUERY")
 
 
-def test_user_policies_nested_type(user_load_content: str):
-    """policies field has PolicyLoadOptions type option (nested)."""
-    lo_block = user_load_content.split("class UserLoadOptions")[1]
-    assert "PolicyLoadOptions" in lo_block
+# ---------------------------------------------------------------------------
+# UserLoadOptions fields
+# ---------------------------------------------------------------------------
 
 
-# ---- Claim load options (leaf) ----------------------------------------------
+def test_user_load_options_has_relationship_fields(gen_import):
+    """UserLoadOptions has fields for policies and profile relationships."""
+    ULO = gen_import("user_load_options").UserLoadOptions
+    field_names = {f.name for f in dc_fields(ULO)}
+    assert "policies" in field_names
+    assert "profile" in field_names
 
 
-def test_claim_load_options_leaf(claim_load_content: str):
-    """Claim.policy is LoadStrategy | None (leaf with no deeper nesting)."""
-    lo_block = claim_load_content.split("class ClaimLoadOptions")[1]
-    # Policy has relationships (holder, claims), so it should have nested.
-    assert "policy:" in lo_block
+def test_user_load_options_instantiation(gen_import):
+    """UserLoadOptions can be instantiated with a LoadStrategy."""
+    mod = gen_import("user_load_options")
+    opts = mod.UserLoadOptions(policies=mod.LoadStrategy.SELECT_IN)
+    assert opts.policies == mod.LoadStrategy.SELECT_IN
 
 
-# ---- Category self-referential ----------------------------------------------
+# ---------------------------------------------------------------------------
+# Claim load options (leaf relationships)
+# ---------------------------------------------------------------------------
 
 
-def test_category_self_referential(category_load_content: str):
-    """Category load options handle self-referential relationship."""
-    lo_block = category_load_content.split("class CategoryLoadOptions")[1]
-    assert "parent:" in lo_block
-    assert "children:" in lo_block
-    # Self-referential: CategoryLoadOptions references itself
-    assert "CategoryLoadOptions" in lo_block
+def test_claim_load_options_has_policy(gen_import):
+    """ClaimLoadOptions has a policy field."""
+    CLO = gen_import("claim_load_options").ClaimLoadOptions
+    field_names = {f.name for f in dc_fields(CLO)}
+    assert "policy" in field_names
 
 
-# ---- LoadStrategy enum ------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Category self-referential
+# ---------------------------------------------------------------------------
 
 
-def test_load_strategy_enum(user_load_content: str):
-    """LoadStrategy enum has SELECT_IN, JOINED, SUBQUERY."""
-    assert "class LoadStrategy" in user_load_content
-    assert "SELECT_IN" in user_load_content
-    assert "JOINED" in user_load_content
-    assert "SUBQUERY" in user_load_content
+def test_category_self_referential_fields(gen_import):
+    """CategoryLoadOptions has parent and children fields referencing itself."""
+    mod = gen_import("category_load_options")
+    CLO = mod.CategoryLoadOptions
+    field_names = {f.name for f in dc_fields(CLO)}
+    assert "parent" in field_names
+    assert "children" in field_names
+
+
+def test_category_self_referential_instantiation(gen_import):
+    """CategoryLoadOptions can nest itself (self-referential)."""
+    mod = gen_import("category_load_options")
+    # Nested: load children, and for each child, also load its children
+    opts = mod.CategoryLoadOptions(
+        children=mod.CategoryLoadOptions(children=mod.LoadStrategy.SELECT_IN)
+    )
+    assert opts.children is not None

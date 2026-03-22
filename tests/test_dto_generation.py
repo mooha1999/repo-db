@@ -1,146 +1,180 @@
-"""Tests for DTO generation."""
+"""Tests for DTO generation.
 
+These tests run the CLI, compile every generated DTO file, import the classes,
+and verify their structure through actual Pydantic model inspection.
+"""
 from __future__ import annotations
 
+import py_compile
 from pathlib import Path
 
 import pytest
-
-from repogen.introspection.engine import discover_models
-from repogen.introspection.ir import ModelIR
-from repogen.generators.dto_generator import generate_dtos
-
-_MODELS_FILE = Path(__file__).parent / "test_models" / "models.py"
+from pydantic import BaseModel
 
 
-def _get_model(models: list[ModelIR], class_name: str) -> ModelIR:
-    for m in models:
-        if m.class_name == class_name:
-            return m
-    raise ValueError(f"Model {class_name!r} not found")
+# ---------------------------------------------------------------------------
+# Syntax / compile checks
+# ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def model_irs() -> list[ModelIR]:
-    return discover_models(str(_MODELS_FILE))
+def test_user_dtos_compile(generated_package):
+    """user_dtos.py has no syntax errors."""
+    path = generated_package / "user_dtos.py"
+    assert path.exists(), "user_dtos.py was not generated"
+    py_compile.compile(str(path), doraise=True)
 
 
-@pytest.fixture
-def user_dto_content(model_irs: list[ModelIR], tmp_path: Path) -> str:
-    user = _get_model(model_irs, "User")
-    generate_dtos(user, tmp_path)
-    return (tmp_path / "user_dtos.py").read_text()
+def test_tenant_policy_dtos_compile(generated_package):
+    """tenant_policy_dtos.py has no syntax errors."""
+    path = generated_package / "tenant_policy_dtos.py"
+    assert path.exists(), "tenant_policy_dtos.py was not generated"
+    py_compile.compile(str(path), doraise=True)
 
 
-@pytest.fixture
-def tenant_policy_dto_content(model_irs: list[ModelIR], tmp_path: Path) -> str:
-    tp = _get_model(model_irs, "TenantPolicy")
-    generate_dtos(tp, tmp_path)
-    return (tmp_path / "tenant_policy_dtos.py").read_text()
+def test_policy_dtos_compile(generated_package):
+    """policy_dtos.py has no syntax errors."""
+    path = generated_package / "policy_dtos.py"
+    assert path.exists(), "policy_dtos.py was not generated"
+    py_compile.compile(str(path), doraise=True)
 
 
-# ---- UserCreate tests -------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Import checks
+# ---------------------------------------------------------------------------
 
 
-def test_user_create_dto_has_required_fields(user_dto_content: str):
-    """name and email are required fields in UserCreate."""
-    assert "name: str" in user_dto_content
-    assert "email: str" in user_dto_content
+def test_user_dtos_importable(gen_import):
+    """user_dtos module can be imported and contains expected classes."""
+    mod = gen_import("user_dtos")
+    assert hasattr(mod, "UserCreate")
+    assert hasattr(mod, "UserUpdate")
+    assert issubclass(mod.UserCreate, BaseModel)
+    assert issubclass(mod.UserUpdate, BaseModel)
 
 
-def test_user_create_dto_excludes_autoincrement_pk(user_dto_content: str):
-    """Autoincrement PK 'id' is not in the create DTO."""
-    create_block = user_dto_content.split("class UserCreate")[1].split(
-        "class UserUpdate"
-    )[0]
-    lines = create_block.strip().splitlines()
-    field_names = [
-        line.strip().split(":")[0]
-        for line in lines
-        if ":" in line and not line.strip().startswith("#")
-    ]
-    assert "id" not in field_names
+def test_tenant_policy_dtos_importable(gen_import):
+    mod = gen_import("tenant_policy_dtos")
+    assert hasattr(mod, "TenantPolicyCreate")
+    assert hasattr(mod, "TenantPolicyUpdate")
+    assert issubclass(mod.TenantPolicyCreate, BaseModel)
+    assert issubclass(mod.TenantPolicyUpdate, BaseModel)
 
 
-def test_user_create_dto_excludes_soft_delete_column(user_dto_content: str):
-    """deleted_at is not present in the create DTO."""
-    create_block = user_dto_content.split("class UserCreate")[1].split(
-        "class UserUpdate"
-    )[0]
-    assert "deleted_at" not in create_block
+# ---------------------------------------------------------------------------
+# UserCreate field logic
+# ---------------------------------------------------------------------------
 
 
-def test_user_create_dto_optional_fields(user_dto_content: str):
-    """bio, role, is_active, created_at are optional (with | None = None) in create DTO."""
-    create_block = user_dto_content.split("class UserCreate")[1].split(
-        "class UserUpdate"
-    )[0]
-    for field in ("bio", "role", "is_active", "created_at"):
-        assert f"{field}:" in create_block
-        for line in create_block.splitlines():
-            stripped = line.strip()
-            if stripped.startswith(f"{field}:"):
-                assert (
-                    "| None = None" in stripped
-                ), f"{field} should be optional with '| None = None'"
-                break
+def test_user_create_required_fields(gen_import):
+    """name and email are required (no default) in UserCreate."""
+    UserCreate = gen_import("user_dtos").UserCreate
+    fields = UserCreate.model_fields
+    assert "name" in fields
+    assert "email" in fields
+    assert fields["name"].is_required()
+    assert fields["email"].is_required()
 
 
-# ---- UserUpdate tests -------------------------------------------------------
+def test_user_create_excludes_autoincrement_pk(gen_import):
+    """Autoincrement PK 'id' is excluded from UserCreate."""
+    UserCreate = gen_import("user_dtos").UserCreate
+    assert "id" not in UserCreate.model_fields
 
 
-def test_user_update_dto_pk_required(user_dto_content: str):
-    """id is required in the update DTO."""
-    update_block = user_dto_content.split("class UserUpdate")[1]
-    assert "id: int" in update_block
+def test_user_create_excludes_soft_delete_column(gen_import):
+    """deleted_at is excluded from UserCreate."""
+    UserCreate = gen_import("user_dtos").UserCreate
+    assert "deleted_at" not in UserCreate.model_fields
 
 
-def test_user_update_dto_excludes_created_at(user_dto_content: str):
-    """created_at is not present in the update DTO."""
-    update_block = user_dto_content.split("class UserUpdate")[1]
-    lines = update_block.strip().splitlines()
-    field_names = [
-        line.strip().split(":")[0]
-        for line in lines
-        if ":" in line and not line.strip().startswith("#")
-    ]
-    assert "created_at" not in field_names
+def test_user_create_optional_fields(gen_import):
+    """bio, role, is_active, created_at are optional in UserCreate."""
+    UserCreate = gen_import("user_dtos").UserCreate
+    for field_name in ("bio", "role", "is_active", "created_at"):
+        assert field_name in UserCreate.model_fields, f"{field_name} missing"
+        assert not UserCreate.model_fields[field_name].is_required(), (
+            f"{field_name} should be optional"
+        )
 
 
-def test_user_update_dto_optional_fields(user_dto_content: str):
-    """Non-PK fields in the update DTO are optional."""
-    update_block = user_dto_content.split("class UserUpdate")[1]
-    for field in ("name", "email", "bio", "role", "is_active"):
-        for line in update_block.splitlines():
-            stripped = line.strip()
-            if stripped.startswith(f"{field}:"):
-                assert (
-                    "| None = None" in stripped
-                ), f"{field} should be optional in update DTO"
-                break
+def test_user_create_instantiation(gen_import):
+    """UserCreate can be instantiated with only required fields."""
+    UserCreate = gen_import("user_dtos").UserCreate
+    dto = UserCreate(name="Alice", email="alice@example.com")
+    assert dto.name == "Alice"
+    assert dto.email == "alice@example.com"
 
 
-# ---- TenantPolicy DTO tests ------------------------------------------------
+# ---------------------------------------------------------------------------
+# UserUpdate field logic
+# ---------------------------------------------------------------------------
 
 
-def test_tenant_policy_create_dto(tenant_policy_dto_content: str):
-    """Composite PK: policy_number required, tenant_name required."""
-    create_block = tenant_policy_dto_content.split("class TenantPolicyCreate")[1].split(
-        "class TenantPolicyUpdate"
-    )[0]
-    assert "policy_number: str" in create_block
-    assert "tenant_name: str" in create_block
+def test_user_update_pk_required(gen_import):
+    """id is required in UserUpdate."""
+    UserUpdate = gen_import("user_dtos").UserUpdate
+    assert "id" in UserUpdate.model_fields
+    assert UserUpdate.model_fields["id"].is_required()
 
 
-def test_tenant_policy_update_dto_composite_pk(tenant_policy_dto_content: str):
-    """Both PKs are required in the update DTO."""
-    update_block = tenant_policy_dto_content.split("class TenantPolicyUpdate")[1]
-    assert "policy_number: str" in update_block
+def test_user_update_excludes_created_at(gen_import):
+    """created_at is excluded from UserUpdate."""
+    UserUpdate = gen_import("user_dtos").UserUpdate
+    assert "created_at" not in UserUpdate.model_fields
 
 
-# ---- Header test ------------------------------------------------------------
+def test_user_update_optional_non_pk_fields(gen_import):
+    """Non-PK fields are optional in UserUpdate."""
+    UserUpdate = gen_import("user_dtos").UserUpdate
+    for field_name in ("name", "email", "bio", "role", "is_active"):
+        assert field_name in UserUpdate.model_fields, f"{field_name} missing"
+        assert not UserUpdate.model_fields[field_name].is_required(), (
+            f"{field_name} should be optional in update"
+        )
 
 
-def test_dto_file_has_header(user_dto_content: str):
+def test_user_update_partial_instantiation(gen_import):
+    """UserUpdate can be instantiated with just the PK."""
+    UserUpdate = gen_import("user_dtos").UserUpdate
+    dto = UserUpdate(id=1)
+    assert dto.id == 1
+
+
+# ---------------------------------------------------------------------------
+# TenantPolicy DTOs (composite PK)
+# ---------------------------------------------------------------------------
+
+
+def test_tenant_policy_create_has_all_pk_fields(gen_import):
+    """Both PKs (tenant_id, policy_number) are present in TenantPolicyCreate."""
+    TPC = gen_import("tenant_policy_dtos").TenantPolicyCreate
+    assert "tenant_id" in TPC.model_fields
+    assert "policy_number" in TPC.model_fields
+
+
+def test_tenant_policy_update_pk_required(gen_import):
+    """Both PKs are required in TenantPolicyUpdate."""
+    TPU = gen_import("tenant_policy_dtos").TenantPolicyUpdate
+    assert TPU.model_fields["tenant_id"].is_required()
+    assert TPU.model_fields["policy_number"].is_required()
+
+
+def test_tenant_policy_create_instantiation(gen_import):
+    """TenantPolicyCreate can be instantiated and round-tripped."""
+    from decimal import Decimal
+    TPC = gen_import("tenant_policy_dtos").TenantPolicyCreate
+    dto = TPC(tenant_id=1, policy_number="TP-001", tenant_name="Acme", premium=Decimal("100"))
+    assert dto.tenant_id == 1
+    data = dto.model_dump()
+    assert "tenant_id" in data
+
+
+# ---------------------------------------------------------------------------
+# Header check
+# ---------------------------------------------------------------------------
+
+
+def test_dto_file_has_header(generated_package):
     """Generated file starts with auto-generated header."""
-    assert user_dto_content.startswith("# AUTO-GENERATED by RepoGen")
+    content = (generated_package / "user_dtos.py").read_text()
+    assert content.startswith("# AUTO-GENERATED by RepoGen")

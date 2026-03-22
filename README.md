@@ -262,6 +262,9 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The test suite includes:
-- Unit tests for introspection, DTO generation, filter generation, load options, and repository generation
-- End-to-end integration tests that generate code and run it against an in-memory SQLite database
+The test suite runs the `repogen generate` CLI as a subprocess, then validates the generated code at multiple levels:
+
+- **Compilation** — every generated `.py` file is run through `py_compile` to catch syntax errors
+- **Import** — generated modules are imported and classes are verified (correct base classes, expected attributes)
+- **Structural inspection** — Pydantic model fields, dataclass fields, method signatures, and async coroutine checks are validated via `inspect` and Pydantic's `model_fields` API — no fragile string matching
+- **Integration** — generated repositories are exercised against an in-memory SQLite database (CRUD, soft delete, restore, filters, ordering, pagination, composite PKs, unique lookups)
