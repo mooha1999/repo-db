@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import enum
 import importlib
 import importlib.util
 import inspect as python_inspect
@@ -16,7 +15,7 @@ from uuid import UUID
 import sqlalchemy
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import DeclarativeBase, RelationshipProperty
-from sqlalchemy.orm.relationships import MANYTOMANY, MANYTOONE, ONETOMANY
+from sqlalchemy.orm.base import MANYTOMANY, MANYTOONE, ONETOMANY
 
 from .ir import ColumnIR, InheritanceIR, ModelIR, RelationshipDirection, RelationshipIR
 
@@ -37,7 +36,9 @@ _SA_TYPE_MAP: dict[type, tuple[str, str | None]] = {
 }
 
 
-def _resolve_python_type(col: Any) -> tuple[str, str | None, bool, str | None, str | None, list[str]]:
+def _resolve_python_type(
+    col: Any,
+) -> tuple[str, str | None, bool, str | None, str | None, list[str]]:
     """Resolve a SQLAlchemy column to (python_type_str, module, is_enum, enum_class_name, enum_module, enum_members)."""
     sa_type = col.type
     is_enum = False
@@ -52,10 +53,17 @@ def _resolve_python_type(col: Any) -> tuple[str, str | None, bool, str | None, s
             enum_class_name = sa_type.enum_class.__name__
             enum_module = sa_type.enum_class.__module__
             enum_members = [m.name for m in sa_type.enum_class]
-            return (enum_class_name, enum_module, True, enum_class_name, enum_module, enum_members)
+            return (
+                enum_class_name,
+                enum_module,
+                True,
+                enum_class_name,
+                enum_module,
+                enum_members,
+            )
 
     # Check for UUID type
-    if hasattr(sqlalchemy, 'Uuid') and isinstance(sa_type, sqlalchemy.Uuid):
+    if hasattr(sqlalchemy, "Uuid") and isinstance(sa_type, sqlalchemy.Uuid):
         return ("UUID", "uuid", False, None, None, [])
 
     # Try to match known types
@@ -88,7 +96,9 @@ def _resolve_python_type(col: Any) -> tuple[str, str | None, bool, str | None, s
     return ("Any", None, False, None, None, [])
 
 
-def _get_relationship_direction(rel: RelationshipProperty[Any]) -> RelationshipDirection:
+def _get_relationship_direction(
+    rel: RelationshipProperty[Any],
+) -> RelationshipDirection:
     """Determine the relationship direction."""
     if rel.direction == MANYTOMANY:
         return RelationshipDirection.MANY_TO_MANY
@@ -126,9 +136,9 @@ def _find_base_class(module: Any) -> type | None:
     for name, obj in python_inspect.getmembers(module, python_inspect.isclass):
         if issubclass(obj, DeclarativeBase) and obj is not DeclarativeBase:
             # Check if this is a direct base (has no mapped table itself or is the base)
-            if hasattr(obj, '__tablename__') or hasattr(obj, 'metadata'):
+            if hasattr(obj, "__tablename__") or hasattr(obj, "metadata"):
                 # If it has no tablename, it's likely the Base class
-                if not hasattr(obj, '__tablename__'):
+                if not hasattr(obj, "__tablename__"):
                     return obj
     # Second pass: find any DeclarativeBase subclass without __tablename__
     for name, obj in python_inspect.getmembers(module, python_inspect.isclass):
@@ -144,7 +154,7 @@ def _find_model_classes(module: Any) -> list[type]:
         if (
             issubclass(obj, DeclarativeBase)
             and obj is not DeclarativeBase
-            and hasattr(obj, '__tablename__')
+            and hasattr(obj, "__tablename__")
         ):
             models.append(obj)
     return models
@@ -175,19 +185,28 @@ def introspect_model(model_cls: type) -> ModelIR:
 
     for col_attr in mapper.column_attrs:
         for col in col_attr.columns:
-            py_type, py_module, is_enum, enum_name, enum_mod, enum_members = _resolve_python_type(col)
+            py_type, py_module, is_enum, enum_name, enum_mod, enum_members = (
+                _resolve_python_type(col)
+            )
 
             is_pk = col.primary_key
             is_autoincrement = False
             if is_pk:
                 pk_columns.append(col.name)
                 # Check autoincrement
-                if hasattr(col, 'autoincrement') and col.autoincrement is True:
+                if hasattr(col, "autoincrement") and col.autoincrement is True:
                     is_autoincrement = True
-                elif hasattr(col, 'identity') and col.identity is not None:
+                elif hasattr(col, "identity") and col.identity is not None:
                     is_autoincrement = True
                 # Integer PKs default to autoincrement in SQLAlchemy
-                elif isinstance(col.type, (sqlalchemy.Integer, sqlalchemy.BigInteger, sqlalchemy.SmallInteger)):
+                elif isinstance(
+                    col.type,
+                    (
+                        sqlalchemy.Integer,
+                        sqlalchemy.BigInteger,
+                        sqlalchemy.SmallInteger,
+                    ),
+                ):
                     if col.autoincrement != False:  # noqa: E712
                         is_autoincrement = True
 
@@ -233,36 +252,37 @@ def introspect_model(model_cls: type) -> ModelIR:
         relationships.append(rel_ir)
 
     # Detect soft delete
-    is_soft_deletable = any(
-        c.name == "deleted_at" and c.nullable
-        for c in columns
-    )
+    is_soft_deletable = any(c.name == "deleted_at" and c.nullable for c in columns)
 
     # Detect inheritance
     inheritance = None
-    mapper_args = getattr(model_cls, '__mapper_args__', {})
+    mapper_args = getattr(model_cls, "__mapper_args__", {})
     if isinstance(mapper_args, dict):
-        if 'polymorphic_on' in mapper_args or 'polymorphic_identity' in mapper_args:
-            is_base = 'polymorphic_on' in mapper_args
-            is_child = not is_base and 'polymorphic_identity' in mapper_args
+        if "polymorphic_on" in mapper_args or "polymorphic_identity" in mapper_args:
+            is_base = "polymorphic_on" in mapper_args
+            is_child = not is_base and "polymorphic_identity" in mapper_args
             parent_name = None
             if is_child:
                 for base in model_cls.__mro__[1:]:
-                    if base is not model_cls and hasattr(base, '__tablename__') and issubclass(base, DeclarativeBase):
+                    if (
+                        base is not model_cls
+                        and hasattr(base, "__tablename__")
+                        and issubclass(base, DeclarativeBase)
+                    ):
                         parent_name = base.__name__
                         break
 
             disc_col = None
-            if is_base and 'polymorphic_on' in mapper_args:
-                poly_on = mapper_args['polymorphic_on']
-                if hasattr(poly_on, 'name'):
+            if is_base and "polymorphic_on" in mapper_args:
+                poly_on = mapper_args["polymorphic_on"]
+                if hasattr(poly_on, "name"):
                     disc_col = poly_on.name
                 elif isinstance(poly_on, str):
                     disc_col = poly_on
 
             disc_value = None
-            if 'polymorphic_identity' in mapper_args:
-                disc_value = str(mapper_args['polymorphic_identity'])
+            if "polymorphic_identity" in mapper_args:
+                disc_value = str(mapper_args["polymorphic_identity"])
 
             inheritance = InheritanceIR(
                 is_base=is_base,
@@ -328,7 +348,9 @@ def introspect_models(path: str | Path) -> list[ModelIR]:
         try:
             ir = introspect_model(model_cls)
             if not ir.primary_key_columns:
-                print(f"Warning: Model {model_cls.__name__} has no primary key — skipped")
+                print(
+                    f"Warning: Model {model_cls.__name__} has no primary key — skipped"
+                )
                 continue
             results.append(ir)
         except Exception as e:

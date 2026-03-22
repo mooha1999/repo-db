@@ -2,22 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from decimal import Decimal
 
 import pytest
-import pytest_asyncio
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.sample_models import (
-    Base,
-    Claim,
     Policy,
     PolicyRider,
     PolicyStatus,
-    Profile,
-    Tag,
     User,
     UserStatus,
 )
@@ -37,10 +30,12 @@ from pydantic import BaseModel
 
 # --- Inline DTOs for testing ---
 
+
 class UserCreate(BaseModel):
     username: str
     email: str
     status: UserStatus | None = None
+
 
 class UserUpdate(BaseModel):
     id: int
@@ -48,10 +43,12 @@ class UserUpdate(BaseModel):
     email: str | None = None
     status: UserStatus | None = None
 
+
 class UserFilter(BaseModel):
     username: "StringFilter | None" = None
     email: "StringFilter | None" = None
     status: "UserStatusFilter | None" = None
+
 
 class StringFilter(BaseModel):
     eq: str | None = None
@@ -60,6 +57,7 @@ class StringFilter(BaseModel):
     ilike: str | None = None
     in_: list[str] | None = None
     not_in: list[str] | None = None
+
 
 class IntFilter(BaseModel):
     eq: int | None = None
@@ -71,6 +69,7 @@ class IntFilter(BaseModel):
     in_: list[int] | None = None
     not_in: list[int] | None = None
 
+
 class NumericFilter(BaseModel):
     eq: Decimal | None = None
     neq: Decimal | None = None
@@ -81,22 +80,26 @@ class NumericFilter(BaseModel):
     in_: list[Decimal] | None = None
     not_in: list[Decimal] | None = None
 
+
 class UserStatusFilter(BaseModel):
     eq: UserStatus | None = None
     neq: UserStatus | None = None
     in_: list[UserStatus] | None = None
     not_in: list[UserStatus] | None = None
 
+
 class UserLoadOptions(BaseModel):
     load_strategy: "LoadStrategy | None" = None
     policies: "bool | None" = None
     profile: "bool | None" = None
+
 
 class PolicyCreate(BaseModel):
     name: str
     premium: Decimal
     status: PolicyStatus | None = None
     user_id: int
+
 
 class PolicyUpdate(BaseModel):
     id: int
@@ -105,10 +108,12 @@ class PolicyUpdate(BaseModel):
     status: PolicyStatus | None = None
     user_id: int | None = None
 
+
 class PolicyFilter(BaseModel):
     name: StringFilter | None = None
     premium: NumericFilter | None = None
     user_id: IntFilter | None = None
+
 
 class PolicyLoadOptions(BaseModel):
     load_strategy: "LoadStrategy | None" = None
@@ -116,9 +121,11 @@ class PolicyLoadOptions(BaseModel):
     user: "bool | None" = None
     tags: "bool | None" = None
 
+
 class PolicyRiderPK(BaseModel):
     policy_id: int
     rider_id: int
+
 
 class PolicyRiderCreate(BaseModel):
     policy_id: int
@@ -126,14 +133,17 @@ class PolicyRiderCreate(BaseModel):
     name: str
     extra_premium: Decimal
 
+
 class PolicyRiderUpdate(BaseModel):
     policy_id: int
     rider_id: int
     name: str | None = None
     extra_premium: Decimal | None = None
 
+
 class PolicyRiderFilter(BaseModel):
     pass
+
 
 class PolicyRiderLoadOptions(BaseModel):
     load_strategy: "LoadStrategy | None" = None
@@ -163,13 +173,16 @@ LoadStrategy = _base_mod.LoadStrategy
 
 # --- Test Repositories ---
 
+
 class UserRepository(BaseRepository):
     model = User
     soft_deletable = True
 
+
 class PolicyRepository(BaseRepository):
     model = Policy
     soft_deletable = True
+
 
 class PolicyRiderRepository(BaseRepository):
     model = PolicyRider
@@ -177,6 +190,7 @@ class PolicyRiderRepository(BaseRepository):
 
 
 # --- Tests ---
+
 
 @pytest.mark.asyncio
 async def test_create_user(session: AsyncSession):
@@ -223,7 +237,9 @@ async def test_create_many(session: AsyncSession):
 @pytest.mark.asyncio
 async def test_update(session: AsyncSession):
     repo = UserRepository(session)
-    user = await repo.create(UserCreate(username="charlie", email="charlie@example.com"))
+    user = await repo.create(
+        UserCreate(username="charlie", email="charlie@example.com")
+    )
 
     updated = await repo.update(UserUpdate(id=user.id, username="charles"))
     assert updated is not None
@@ -289,7 +305,9 @@ async def test_get_many_basic(session: AsyncSession):
 async def test_get_many_with_limit_offset(session: AsyncSession):
     repo = UserRepository(session)
     for i in range(5):
-        await repo.create(UserCreate(username=f"paged_{i}", email=f"paged_{i}@example.com"))
+        await repo.create(
+            UserCreate(username=f"paged_{i}", email=f"paged_{i}@example.com")
+        )
 
     page1 = await repo.get_many(limit=2, offset=0, order_by="username")
     page2 = await repo.get_many(limit=2, offset=2, order_by="username")
@@ -304,7 +322,9 @@ async def test_filter_string_eq(session: AsyncSession):
     await repo.create(UserCreate(username="filter_test", email="ft@example.com"))
     await repo.create(UserCreate(username="other", email="other@example.com"))
 
-    results = await repo.get_many(filters=UserFilter(username=StringFilter(eq="filter_test")))
+    results = await repo.get_many(
+        filters=UserFilter(username=StringFilter(eq="filter_test"))
+    )
     assert len(results) == 1
     assert results[0].username == "filter_test"
 
@@ -316,7 +336,9 @@ async def test_filter_string_like(session: AsyncSession):
     await repo.create(UserCreate(username="like_test_2", email="lt2@example.com"))
     await repo.create(UserCreate(username="no_match", email="nm@example.com"))
 
-    results = await repo.get_many(filters=UserFilter(username=StringFilter(like="like_test%")))
+    results = await repo.get_many(
+        filters=UserFilter(username=StringFilter(like="like_test%"))
+    )
     assert len(results) == 2
 
 
@@ -327,15 +349,25 @@ async def test_filter_string_in(session: AsyncSession):
     await repo.create(UserCreate(username="in_2", email="in2@example.com"))
     await repo.create(UserCreate(username="in_3", email="in3@example.com"))
 
-    results = await repo.get_many(filters=UserFilter(username=StringFilter(in_=["in_1", "in_3"])))
+    results = await repo.get_many(
+        filters=UserFilter(username=StringFilter(in_=["in_1", "in_3"]))
+    )
     assert len(results) == 2
 
 
 @pytest.mark.asyncio
 async def test_filter_enum(session: AsyncSession):
     repo = UserRepository(session)
-    await repo.create(UserCreate(username="active_user", email="au@example.com", status=UserStatus.ACTIVE))
-    await repo.create(UserCreate(username="banned_user", email="bu@example.com", status=UserStatus.BANNED))
+    await repo.create(
+        UserCreate(
+            username="active_user", email="au@example.com", status=UserStatus.ACTIVE
+        )
+    )
+    await repo.create(
+        UserCreate(
+            username="banned_user", email="bu@example.com", status=UserStatus.BANNED
+        )
+    )
 
     results = await repo.get_many(
         filters=UserFilter(status=UserStatusFilter(eq=UserStatus.BANNED))
@@ -360,9 +392,7 @@ async def test_count_with_filter(session: AsyncSession):
     await repo.create(UserCreate(username="cnt_f1", email="cntf1@example.com"))
     await repo.create(UserCreate(username="cnt_f2", email="cntf2@example.com"))
 
-    count = await repo.count(
-        filters=UserFilter(username=StringFilter(eq="cnt_f1"))
-    )
+    count = await repo.count(filters=UserFilter(username=StringFilter(eq="cnt_f1")))
     assert count == 1
 
 
@@ -371,11 +401,15 @@ async def test_soft_delete_excluded_from_count(session: AsyncSession):
     repo = UserRepository(session)
     user = await repo.create(UserCreate(username="cnt_sd", email="cntsd@example.com"))
 
-    count_before = await repo.count(filters=UserFilter(username=StringFilter(eq="cnt_sd")))
+    count_before = await repo.count(
+        filters=UserFilter(username=StringFilter(eq="cnt_sd"))
+    )
     assert count_before == 1
 
     await repo.soft_delete(user.id)
-    count_after = await repo.count(filters=UserFilter(username=StringFilter(eq="cnt_sd")))
+    count_after = await repo.count(
+        filters=UserFilter(username=StringFilter(eq="cnt_sd"))
+    )
     assert count_after == 0
 
     count_inc = await repo.count(
@@ -407,11 +441,17 @@ async def test_ordering(session: AsyncSession):
 @pytest.mark.asyncio
 async def test_policy_with_numeric_filter(session: AsyncSession):
     user_repo = UserRepository(session)
-    user = await user_repo.create(UserCreate(username="policy_owner", email="po@example.com"))
+    user = await user_repo.create(
+        UserCreate(username="policy_owner", email="po@example.com")
+    )
 
     repo = PolicyRepository(session)
-    await repo.create(PolicyCreate(name="cheap", premium=Decimal("100.00"), user_id=user.id))
-    await repo.create(PolicyCreate(name="expensive", premium=Decimal("5000.00"), user_id=user.id))
+    await repo.create(
+        PolicyCreate(name="cheap", premium=Decimal("100.00"), user_id=user.id)
+    )
+    await repo.create(
+        PolicyCreate(name="expensive", premium=Decimal("5000.00"), user_id=user.id)
+    )
 
     results = await repo.get_many(
         filters=PolicyFilter(premium=NumericFilter(gt=Decimal("1000.00")))
@@ -423,10 +463,14 @@ async def test_policy_with_numeric_filter(session: AsyncSession):
 @pytest.mark.asyncio
 async def test_load_options_relationships(session: AsyncSession):
     user_repo = UserRepository(session)
-    user = await user_repo.create(UserCreate(username="loader", email="loader@example.com"))
+    user = await user_repo.create(
+        UserCreate(username="loader", email="loader@example.com")
+    )
 
     policy_repo = PolicyRepository(session)
-    await policy_repo.create(PolicyCreate(name="pol1", premium=Decimal("100.00"), user_id=user.id))
+    await policy_repo.create(
+        PolicyCreate(name="pol1", premium=Decimal("100.00"), user_id=user.id)
+    )
 
     # Load user with policies
     loaded = await user_repo.get_by_id(
@@ -441,7 +485,9 @@ async def test_load_options_relationships(session: AsyncSession):
 async def test_composite_pk_operations(session: AsyncSession):
     # First create a user and policy
     user_repo = UserRepository(session)
-    user = await user_repo.create(UserCreate(username="rider_owner", email="ro@example.com"))
+    user = await user_repo.create(
+        UserCreate(username="rider_owner", email="ro@example.com")
+    )
 
     policy_repo = PolicyRepository(session)
     policy = await policy_repo.create(
@@ -450,7 +496,10 @@ async def test_composite_pk_operations(session: AsyncSession):
 
     repo = PolicyRiderRepository(session)
     dto = PolicyRiderCreate(
-        policy_id=policy.id, rider_id=1, name="Extra Coverage", extra_premium=Decimal("50.00")
+        policy_id=policy.id,
+        rider_id=1,
+        name="Extra Coverage",
+        extra_premium=Decimal("50.00"),
     )
     rider = await repo.create(dto)
     assert rider.policy_id == policy.id
@@ -481,7 +530,9 @@ async def test_composite_pk_operations(session: AsyncSession):
 async def test_create_with_enum(session: AsyncSession):
     repo = UserRepository(session)
     user = await repo.create(
-        UserCreate(username="enum_user", email="eu@example.com", status=UserStatus.BANNED)
+        UserCreate(
+            username="enum_user", email="eu@example.com", status=UserStatus.BANNED
+        )
     )
     assert user.status == UserStatus.BANNED
 

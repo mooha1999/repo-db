@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import ForeignKey, Numeric, String, Table, Column, Integer
@@ -72,7 +72,9 @@ class Policy(Base):
 
     user: Mapped["User"] = relationship(back_populates="policies")
     claims: Mapped[list["Claim"]] = relationship(back_populates="policy")
-    tags: Mapped[list["Tag"]] = relationship(secondary=policy_tags, back_populates="policies")
+    tags: Mapped[list["Tag"]] = relationship(
+        secondary=policy_tags, back_populates="policies"
+    )
 
 
 class Claim(Base):
@@ -82,7 +84,7 @@ class Claim(Base):
     policy_id: Mapped[int] = mapped_column(ForeignKey("policies.id"))
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     description: Mapped[str | None] = mapped_column(String(500), default=None)
-    filed_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    filed_at: Mapped[datetime] = mapped_column(default=datetime.now(timezone.utc))
 
     policy: Mapped["Policy"] = relationship(back_populates="claims")
 
@@ -93,7 +95,9 @@ class Tag(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(50))
 
-    policies: Mapped[list["Policy"]] = relationship(secondary=policy_tags, back_populates="tags")
+    policies: Mapped[list["Policy"]] = relationship(
+        secondary=policy_tags, back_populates="tags"
+    )
 
 
 # Composite PK model
