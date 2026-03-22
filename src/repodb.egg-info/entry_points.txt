@@ -1,0 +1,2 @@
+[console_scripts]
+repodb = repodb.cli:main

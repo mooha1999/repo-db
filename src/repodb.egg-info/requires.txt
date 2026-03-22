@@ -1,0 +1,10 @@
+sqlalchemy>=2.0
+pydantic>=2.0
+click>=8.0
+black>=23.0
+
+[dev]
+pytest>=7.0
+pytest-asyncio>=0.21
+aiosqlite>=0.19
+pyright>=1.1
