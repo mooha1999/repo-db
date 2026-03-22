@@ -1,4 +1,5 @@
 """Tests for the introspection engine."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -19,7 +20,9 @@ def _get_model(models: list[ModelIR], class_name: str) -> ModelIR:
     for m in models:
         if m.class_name == class_name:
             return m
-    raise ValueError(f"Model {class_name!r} not found in {[m.class_name for m in models]}")
+    raise ValueError(
+        f"Model {class_name!r} not found in {[m.class_name for m in models]}"
+    )
 
 
 def _get_column(model: ModelIR, col_name: str):
@@ -37,14 +40,22 @@ def model_irs() -> list[ModelIR]:
 
 # ---- Discovery tests -------------------------------------------------------
 
-def test_discover_models_from_file(model_irs):
+
+def test_discover_models_from_file(model_irs: list[ModelIR]):
     """discover_models finds the expected number of models from a single file."""
     names = {m.class_name for m in model_irs}
-    assert names >= {"User", "UserProfile", "Policy", "Claim", "Category", "TenantPolicy"}
+    assert names >= {
+        "User",
+        "UserProfile",
+        "Policy",
+        "Claim",
+        "Category",
+        "TenantPolicy",
+    }
     assert len(model_irs) >= 6
 
 
-def test_discover_models_excludes_base(model_irs):
+def test_discover_models_excludes_base(model_irs: list[ModelIR]):
     """Base class is excluded from the discovered models."""
     names = {m.class_name for m in model_irs}
     assert "Base" not in names
@@ -52,7 +63,8 @@ def test_discover_models_excludes_base(model_irs):
 
 # ---- User model IR ---------------------------------------------------------
 
-def test_user_model_ir(model_irs):
+
+def test_user_model_ir(model_irs: list[ModelIR]):
     """User ModelIR has expected class_name, table_name, columns, relationships, and soft delete."""
     user = _get_model(model_irs, "User")
     assert user.class_name == "User"
@@ -61,7 +73,16 @@ def test_user_model_ir(model_irs):
     assert user.soft_delete_column == "deleted_at"
 
     col_names = {c.name for c in user.columns}
-    assert col_names >= {"id", "name", "email", "role", "is_active", "bio", "deleted_at", "created_at"}
+    assert col_names >= {
+        "id",
+        "name",
+        "email",
+        "role",
+        "is_active",
+        "bio",
+        "deleted_at",
+        "created_at",
+    }
 
     rel_names = {r.name for r in user.relationships}
     assert rel_names >= {"policies", "profile"}
@@ -69,7 +90,8 @@ def test_user_model_ir(model_irs):
 
 # ---- Policy model IR -------------------------------------------------------
 
-def test_policy_model_ir(model_irs):
+
+def test_policy_model_ir(model_irs: list[ModelIR]):
     """Policy is not soft-deletable and has relationships."""
     policy = _get_model(model_irs, "Policy")
     assert policy.is_soft_deletable is False
@@ -82,7 +104,8 @@ def test_policy_model_ir(model_irs):
 
 # ---- TenantPolicy composite PK ---------------------------------------------
 
-def test_tenant_policy_composite_pk(model_irs):
+
+def test_tenant_policy_composite_pk(model_irs: list[ModelIR]):
     """TenantPolicy has a composite primary key with 2 PK columns."""
     tp = _get_model(model_irs, "TenantPolicy")
     assert len(tp.primary_key_columns) == 2
@@ -92,7 +115,8 @@ def test_tenant_policy_composite_pk(model_irs):
 
 # ---- Category self-referential ----------------------------------------------
 
-def test_category_self_referential(model_irs):
+
+def test_category_self_referential(model_irs: list[ModelIR]):
     """Category has at least one self-referential relationship."""
     cat = _get_model(model_irs, "Category")
     self_refs = [r for r in cat.relationships if r.is_self_referential]
@@ -101,7 +125,8 @@ def test_category_self_referential(model_irs):
 
 # ---- Column type detection --------------------------------------------------
 
-def test_column_types_detected(model_irs):
+
+def test_column_types_detected(model_irs: list[ModelIR]):
     """Python types are correctly mapped for various column types."""
     user = _get_model(model_irs, "User")
     policy = _get_model(model_irs, "Policy")
@@ -115,7 +140,8 @@ def test_column_types_detected(model_irs):
 
 # ---- Enum values ------------------------------------------------------------
 
-def test_enum_values_extracted(model_irs):
+
+def test_enum_values_extracted(model_irs: list[ModelIR]):
     """Enum values are extracted from UserRole enum on User.role."""
     user = _get_model(model_irs, "User")
     role_col = _get_column(user, "role")
@@ -125,7 +151,8 @@ def test_enum_values_extracted(model_irs):
 
 # ---- Unique constraints -----------------------------------------------------
 
-def test_unique_constraints_detected(model_irs):
+
+def test_unique_constraints_detected(model_irs: list[ModelIR]):
     """Unique constraints are detected for User.email and Policy.policy_number."""
     user = _get_model(model_irs, "User")
     email_col = _get_column(user, "email")
@@ -138,7 +165,8 @@ def test_unique_constraints_detected(model_irs):
 
 # ---- Foreign key detection --------------------------------------------------
 
-def test_foreign_key_detected(model_irs):
+
+def test_foreign_key_detected(model_irs: list[ModelIR]):
     """Foreign key is detected on Policy.holder_id."""
     policy = _get_model(model_irs, "Policy")
     holder_col = _get_column(policy, "holder_id")
@@ -149,7 +177,8 @@ def test_foreign_key_detected(model_irs):
 
 # ---- Autoincrement detection ------------------------------------------------
 
-def test_autoincrement_detection(model_irs):
+
+def test_autoincrement_detection(model_irs: list[ModelIR]):
     """Autoincrement is detected on integer primary keys."""
     user = _get_model(model_irs, "User")
     id_col = _get_column(user, "id")
@@ -159,7 +188,8 @@ def test_autoincrement_detection(model_irs):
 
 # ---- Server default detection -----------------------------------------------
 
-def test_server_default_detected(model_irs):
+
+def test_server_default_detected(model_irs: list[ModelIR]):
     """server_default is detected on created_at columns."""
     user = _get_model(model_irs, "User")
     created_col = _get_column(user, "created_at")
@@ -168,7 +198,8 @@ def test_server_default_detected(model_irs):
 
 # ---- Nullable detection -----------------------------------------------------
 
-def test_nullable_detection(model_irs):
+
+def test_nullable_detection(model_irs: list[ModelIR]):
     """Nullable columns are correctly identified."""
     user = _get_model(model_irs, "User")
     bio_col = _get_column(user, "bio")

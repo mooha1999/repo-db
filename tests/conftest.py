@@ -1,12 +1,17 @@
 """Test fixtures for RepoGen tests."""
+
 from __future__ import annotations
 
 import asyncio
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    create_async_engine,
+    async_sessionmaker,
+    AsyncEngine,
+)
 
 # Path to the test models
 TEST_MODELS_DIR = Path(__file__).parent / "test_models"
@@ -41,20 +46,22 @@ async def async_engine():
 
 
 @pytest.fixture
-async def async_session(async_engine):
+async def async_session(async_engine: AsyncEngine):
     """Create an async session for testing."""
     from tests.test_models.models import Base
 
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    session_factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+    session_factory = async_sessionmaker(
+        async_engine, class_=AsyncSession, expire_on_commit=False
+    )
     async with session_factory() as session:
         yield session
 
 
 @pytest.fixture
-def output_dir(tmp_path):
+def output_dir(tmp_path: Path):
     """Temporary output directory for generated files."""
     out = tmp_path / "generated"
     out.mkdir()

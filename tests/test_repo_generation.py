@@ -1,4 +1,5 @@
 """Tests for repository generation."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -25,67 +26,88 @@ def model_irs() -> list[ModelIR]:
 
 
 @pytest.fixture
-def user_repo_content(model_irs, tmp_path) -> str:
+def user_repo_content(model_irs: list[ModelIR], tmp_path: Path) -> str:
     user = _get_model(model_irs, "User")
-    generate_repository(user, tmp_path, internals_path="generated", config={
-        "generate_unique_lookups": True,
-        "generate_hard_delete": True,
-        "generate_restore": True,
-    })
+    generate_repository(
+        user,
+        tmp_path,
+        internals_path="generated",
+        config={
+            "generate_unique_lookups": True,
+            "generate_hard_delete": True,
+            "generate_restore": True,
+        },
+    )
     return (tmp_path / "user_repository.py").read_text()
 
 
 @pytest.fixture
-def policy_repo_content(model_irs, tmp_path) -> str:
+def policy_repo_content(model_irs: list[ModelIR], tmp_path: Path) -> str:
     policy = _get_model(model_irs, "Policy")
-    generate_repository(policy, tmp_path, internals_path="generated", config={
-        "generate_unique_lookups": True,
-        "generate_hard_delete": True,
-        "generate_restore": True,
-    })
+    generate_repository(
+        policy,
+        tmp_path,
+        internals_path="generated",
+        config={
+            "generate_unique_lookups": True,
+            "generate_hard_delete": True,
+            "generate_restore": True,
+        },
+    )
     return (tmp_path / "policy_repository.py").read_text()
 
 
 @pytest.fixture
-def tenant_policy_repo_content(model_irs, tmp_path) -> str:
+def tenant_policy_repo_content(model_irs: list[ModelIR], tmp_path: Path) -> str:
     tp = _get_model(model_irs, "TenantPolicy")
-    generate_repository(tp, tmp_path, internals_path="generated", config={
-        "generate_unique_lookups": True,
-        "generate_hard_delete": True,
-        "generate_restore": True,
-    })
+    generate_repository(
+        tp,
+        tmp_path,
+        internals_path="generated",
+        config={
+            "generate_unique_lookups": True,
+            "generate_hard_delete": True,
+            "generate_restore": True,
+        },
+    )
     return (tmp_path / "tenant_policy_repository.py").read_text()
 
 
 # ---- User soft-delete methods -----------------------------------------------
 
-def test_user_repo_has_soft_delete_methods(user_repo_content):
+
+def test_user_repo_has_soft_delete_methods(user_repo_content: str):
     """User repo has delete, hard_delete, and restore methods."""
     assert "async def delete(" in user_repo_content
     assert "async def hard_delete(" in user_repo_content
     assert "async def restore(" in user_repo_content
 
 
-def test_user_repo_include_deleted_param(user_repo_content):
+def test_user_repo_include_deleted_param(user_repo_content: str):
     """include_deleted parameter is present in get_by_id, get_many, count."""
-    get_by_id_block = user_repo_content.split("async def get_by_id")[1].split("async def ")[0]
+    get_by_id_block = user_repo_content.split("async def get_by_id")[1].split(
+        "async def "
+    )[0]
     assert "include_deleted" in get_by_id_block
 
-    get_many_block = user_repo_content.split("async def get_many")[1].split("async def ")[0]
+    get_many_block = user_repo_content.split("async def get_many")[1].split(
+        "async def "
+    )[0]
     assert "include_deleted" in get_many_block
 
     count_block = user_repo_content.split("async def count")[1].split("async def ")[0]
     assert "include_deleted" in count_block
 
 
-def test_user_repo_get_by_email(user_repo_content):
+def test_user_repo_get_by_email(user_repo_content: str):
     """Unique column lookup method get_by_email is generated."""
     assert "async def get_by_email(" in user_repo_content
 
 
 # ---- Policy repo (no soft delete) ------------------------------------------
 
-def test_policy_repo_no_soft_delete(policy_repo_content):
+
+def test_policy_repo_no_soft_delete(policy_repo_content: str):
     """Policy repo has no hard_delete, restore, or include_deleted."""
     assert "async def hard_delete(" not in policy_repo_content
     assert "async def restore(" not in policy_repo_content
@@ -94,23 +116,38 @@ def test_policy_repo_no_soft_delete(policy_repo_content):
 
 # ---- TenantPolicy composite PK ---------------------------------------------
 
-def test_tenant_policy_repo_composite_pk(tenant_policy_repo_content):
+
+def test_tenant_policy_repo_composite_pk(tenant_policy_repo_content: str):
     """get_by_id takes tenant_id and policy_number params."""
-    get_by_id_block = tenant_policy_repo_content.split("async def get_by_id")[1].split("async def ")[0]
+    get_by_id_block = tenant_policy_repo_content.split("async def get_by_id")[1].split(
+        "async def "
+    )[0]
     assert "tenant_id" in get_by_id_block
     assert "policy_number" in get_by_id_block
 
 
 # ---- CRUD methods -----------------------------------------------------------
 
-def test_repo_has_all_crud_methods(user_repo_content):
+
+def test_repo_has_all_crud_methods(user_repo_content: str):
     """Repository has all expected CRUD methods."""
-    for method in ("get_by_id", "get_many", "get_one", "create", "create_many", "update", "delete", "count", "exists"):
+    for method in (
+        "get_by_id",
+        "get_many",
+        "get_one",
+        "create",
+        "create_many",
+        "update",
+        "delete",
+        "count",
+        "exists",
+    ):
         assert f"async def {method}(" in user_repo_content, f"Missing method: {method}"
 
 
 # ---- Header -----------------------------------------------------------------
 
-def test_repo_file_has_header(user_repo_content):
+
+def test_repo_file_has_header(user_repo_content: str):
     """Generated file starts with auto-generated header."""
     assert user_repo_content.startswith("# AUTO-GENERATED by RepoGen")

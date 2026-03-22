@@ -1,4 +1,5 @@
 """End-to-end integration tests using actual async SQLite database."""
+
 from __future__ import annotations
 
 import importlib
@@ -18,7 +19,7 @@ from repogen.generators.internals_generator import generate_internals
 
 
 @pytest.fixture(scope="module")
-def generated_dir(tmp_path_factory):
+def generated_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Generate all code to a temporary directory and make it importable."""
     output = tmp_path_factory.mktemp("generated")
     models_path = Path(__file__).parent / "test_models" / "models.py"
@@ -32,11 +33,16 @@ def generated_dir(tmp_path_factory):
         generate_dtos(m, output)
         generate_filters(m, output)
         generate_load_options(m, model_irs, output)
-        generate_repository(m, output, internals_path=output.name, config={
-            "generate_unique_lookups": True,
-            "generate_hard_delete": True,
-            "generate_restore": True,
-        })
+        generate_repository(
+            m,
+            output,
+            internals_path=output.name,
+            config={
+                "generate_unique_lookups": True,
+                "generate_hard_delete": True,
+                "generate_restore": True,
+            },
+        )
 
     # Make generated code importable
     if str(output.parent) not in sys.path:
@@ -68,7 +74,8 @@ async def session():
 # Helper to import generated modules
 # ---------------------------------------------------------------------------
 
-def _import_gen(generated_dir, module_suffix: str):
+
+def _import_gen(generated_dir: Path, module_suffix: str):
     """Import a generated module by suffix, e.g. 'user_repository'."""
     mod_name = f"{generated_dir.name}.{module_suffix}"
     if mod_name in sys.modules:
@@ -80,7 +87,8 @@ def _import_gen(generated_dir, module_suffix: str):
 # Tests
 # ---------------------------------------------------------------------------
 
-async def test_create_and_get_user(generated_dir, session):
+
+async def test_create_and_get_user(generated_dir: Path, session: AsyncSession):
     repo_mod = _import_gen(generated_dir, "user_repository")
     dto_mod = _import_gen(generated_dir, "user_dtos")
 
@@ -97,7 +105,7 @@ async def test_create_and_get_user(generated_dir, session):
     assert found.email == "alice@example.com"
 
 
-async def test_create_many_users(generated_dir, session):
+async def test_create_many_users(generated_dir: Path, session: AsyncSession):
     repo_mod = _import_gen(generated_dir, "user_repository")
     dto_mod = _import_gen(generated_dir, "user_dtos")
 
@@ -105,15 +113,17 @@ async def test_create_many_users(generated_dir, session):
     UserCreate = dto_mod.UserCreate
 
     repo = UserRepository(session)
-    users = await repo.create_many([
-        UserCreate(name="Bob", email="bob@example.com"),
-        UserCreate(name="Carol", email="carol@example.com"),
-    ])
+    users = await repo.create_many(
+        [
+            UserCreate(name="Bob", email="bob@example.com"),
+            UserCreate(name="Carol", email="carol@example.com"),
+        ]
+    )
     assert len(users) == 2
     assert all(u.id is not None for u in users)
 
 
-async def test_user_soft_delete(generated_dir, session):
+async def test_user_soft_delete(generated_dir: Path, session: AsyncSession):
     repo_mod = _import_gen(generated_dir, "user_repository")
     dto_mod = _import_gen(generated_dir, "user_dtos")
 
@@ -133,7 +143,7 @@ async def test_user_soft_delete(generated_dir, session):
     assert found.deleted_at is not None
 
 
-async def test_user_restore(generated_dir, session):
+async def test_user_restore(generated_dir: Path, session: AsyncSession):
     repo_mod = _import_gen(generated_dir, "user_repository")
     dto_mod = _import_gen(generated_dir, "user_dtos")
 
@@ -150,12 +160,14 @@ async def test_user_restore(generated_dir, session):
     assert found is not None
 
 
-async def test_user_hard_delete(generated_dir, session):
+async def test_user_hard_delete(generated_dir: Path, session: AsyncSession):
     repo_mod = _import_gen(generated_dir, "user_repository")
     dto_mod = _import_gen(generated_dir, "user_dtos")
 
     repo = repo_mod.UserRepository(session)
-    user = await repo.create(dto_mod.UserCreate(name="Frank", email="frank@example.com"))
+    user = await repo.create(
+        dto_mod.UserCreate(name="Frank", email="frank@example.com")
+    )
 
     result = await repo.hard_delete(user.id)
     assert result is True
@@ -165,7 +177,7 @@ async def test_user_hard_delete(generated_dir, session):
     assert found is None
 
 
-async def test_user_get_by_email(generated_dir, session):
+async def test_user_get_by_email(generated_dir: Path, session: AsyncSession):
     repo_mod = _import_gen(generated_dir, "user_repository")
     dto_mod = _import_gen(generated_dir, "user_dtos")
 
@@ -180,7 +192,7 @@ async def test_user_get_by_email(generated_dir, session):
     assert not_found is None
 
 
-async def test_user_count_and_exists(generated_dir, session):
+async def test_user_count_and_exists(generated_dir: Path, session: AsyncSession):
     repo_mod = _import_gen(generated_dir, "user_repository")
     dto_mod = _import_gen(generated_dir, "user_dtos")
     filter_mod = _import_gen(generated_dir, "user_filters")
@@ -202,7 +214,7 @@ async def test_user_count_and_exists(generated_dir, session):
     assert exists is False
 
 
-async def test_user_filter_by_name(generated_dir, session):
+async def test_user_filter_by_name(generated_dir: Path, session: AsyncSession):
     repo_mod = _import_gen(generated_dir, "user_repository")
     dto_mod = _import_gen(generated_dir, "user_dtos")
     filter_mod = _import_gen(generated_dir, "user_filters")
@@ -219,14 +231,18 @@ async def test_user_filter_by_name(generated_dir, session):
     assert results[0].name == "Jack"
 
 
-async def test_user_filter_by_active(generated_dir, session):
+async def test_user_filter_by_active(generated_dir: Path, session: AsyncSession):
     repo_mod = _import_gen(generated_dir, "user_repository")
     dto_mod = _import_gen(generated_dir, "user_dtos")
     filter_mod = _import_gen(generated_dir, "user_filters")
 
     repo = repo_mod.UserRepository(session)
-    await repo.create(dto_mod.UserCreate(name="Kate", email="kate@example.com", is_active=True))
-    await repo.create(dto_mod.UserCreate(name="Leo", email="leo@example.com", is_active=False))
+    await repo.create(
+        dto_mod.UserCreate(name="Kate", email="kate@example.com", is_active=True)
+    )
+    await repo.create(
+        dto_mod.UserCreate(name="Leo", email="leo@example.com", is_active=False)
+    )
 
     UserFilter = filter_mod.UserFilter
     BoolFilter = filter_mod.BoolFilter
@@ -239,7 +255,7 @@ async def test_user_filter_by_active(generated_dir, session):
     assert len(inactive) == 1
 
 
-async def test_user_update(generated_dir, session):
+async def test_user_update(generated_dir: Path, session: AsyncSession):
     repo_mod = _import_gen(generated_dir, "user_repository")
     dto_mod = _import_gen(generated_dir, "user_dtos")
 
@@ -252,7 +268,7 @@ async def test_user_update(generated_dir, session):
     assert updated.email == "mike@example.com"  # unchanged
 
 
-async def test_policy_create_and_delete(generated_dir, session):
+async def test_policy_create_and_delete(generated_dir: Path, session: AsyncSession):
     """Non-soft-deletable model: delete is a hard delete."""
     user_repo_mod = _import_gen(generated_dir, "user_repository")
     user_dto_mod = _import_gen(generated_dir, "user_dtos")
@@ -260,15 +276,20 @@ async def test_policy_create_and_delete(generated_dir, session):
     policy_dto_mod = _import_gen(generated_dir, "policy_dtos")
 
     user_repo = user_repo_mod.UserRepository(session)
-    user = await user_repo.create(user_dto_mod.UserCreate(name="Nora", email="nora@example.com"))
+    user = await user_repo.create(
+        user_dto_mod.UserCreate(name="Nora", email="nora@example.com")
+    )
 
     from decimal import Decimal
+
     policy_repo = policy_repo_mod.PolicyRepository(session)
-    policy = await policy_repo.create(policy_dto_mod.PolicyCreate(
-        holder_id=user.id,
-        policy_number="POL-001",
-        premium=Decimal("100.00"),
-    ))
+    policy = await policy_repo.create(
+        policy_dto_mod.PolicyCreate(
+            holder_id=user.id,
+            policy_number="POL-001",
+            premium=Decimal("100.00"),
+        )
+    )
     assert policy.id is not None
 
     # Delete is a hard delete for Policy (no soft delete)
@@ -280,21 +301,26 @@ async def test_policy_create_and_delete(generated_dir, session):
     assert found is None
 
 
-async def test_tenant_policy_composite_pk_crud(generated_dir, session):
+async def test_tenant_policy_composite_pk_crud(
+    generated_dir: Path, session: AsyncSession
+):
     """Composite PK CRUD operations for TenantPolicy."""
     tp_repo_mod = _import_gen(generated_dir, "tenant_policy_repository")
     tp_dto_mod = _import_gen(generated_dir, "tenant_policy_dtos")
 
     from decimal import Decimal
+
     repo = tp_repo_mod.TenantPolicyRepository(session)
 
     # Create
-    tp = await repo.create(tp_dto_mod.TenantPolicyCreate(
-        tenant_id=1,
-        policy_number="TP-001",
-        tenant_name="Acme Corp",
-        premium=Decimal("500.00"),
-    ))
+    tp = await repo.create(
+        tp_dto_mod.TenantPolicyCreate(
+            tenant_id=1,
+            policy_number="TP-001",
+            tenant_name="Acme Corp",
+            premium=Decimal("500.00"),
+        )
+    )
     assert tp.tenant_id == 1
     assert tp.policy_number == "TP-001"
 
@@ -304,11 +330,13 @@ async def test_tenant_policy_composite_pk_crud(generated_dir, session):
     assert found.tenant_name == "Acme Corp"
 
     # Update
-    updated = await repo.update(tp_dto_mod.TenantPolicyUpdate(
-        tenant_id=1,
-        policy_number="TP-001",
-        tenant_name="Acme Inc",
-    ))
+    updated = await repo.update(
+        tp_dto_mod.TenantPolicyUpdate(
+            tenant_id=1,
+            policy_number="TP-001",
+            tenant_name="Acme Inc",
+        )
+    )
     assert updated is not None
     assert updated.tenant_name == "Acme Inc"
 
