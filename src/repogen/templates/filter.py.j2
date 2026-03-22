@@ -1,0 +1,106 @@
+{{ header }}
+from __future__ import annotations
+
+from pydantic import BaseModel
+{% if type_imports %}
+{{ type_imports }}
+{% endif %}
+{% if enum_imports %}
+{{ enum_imports }}
+{% endif %}
+
+
+class StringFilter(BaseModel):
+    eq: str | None = None
+    neq: str | None = None
+    like: str | None = None
+    ilike: str | None = None
+    in_: list[str] | None = None
+    not_in: list[str] | None = None
+    is_null: bool | None = None
+
+
+class IntFilter(BaseModel):
+    eq: int | None = None
+    neq: int | None = None
+    gt: int | None = None
+    gte: int | None = None
+    lt: int | None = None
+    lte: int | None = None
+    in_: list[int] | None = None
+    not_in: list[int] | None = None
+    is_null: bool | None = None
+
+
+class FloatFilter(BaseModel):
+    eq: float | None = None
+    neq: float | None = None
+    gt: float | None = None
+    gte: float | None = None
+    lt: float | None = None
+    lte: float | None = None
+    is_null: bool | None = None
+
+
+class DecimalFilter(BaseModel):
+    eq: Decimal | None = None
+    neq: Decimal | None = None
+    gt: Decimal | None = None
+    gte: Decimal | None = None
+    lt: Decimal | None = None
+    lte: Decimal | None = None
+    is_null: bool | None = None
+
+
+class BoolFilter(BaseModel):
+    eq: bool | None = None
+    is_null: bool | None = None
+
+
+class UUIDFilter(BaseModel):
+    eq: UUID | None = None
+    neq: UUID | None = None
+    in_: list[UUID] | None = None
+    not_in: list[UUID] | None = None
+    is_null: bool | None = None
+
+
+class DateTimeFilter(BaseModel):
+    eq: datetime | None = None
+    neq: datetime | None = None
+    gt: datetime | None = None
+    gte: datetime | None = None
+    lt: datetime | None = None
+    lte: datetime | None = None
+    between: tuple[datetime, datetime] | None = None
+    is_null: bool | None = None
+
+
+class DateFilter(BaseModel):
+    eq: date | None = None
+    neq: date | None = None
+    gt: date | None = None
+    gte: date | None = None
+    lt: date | None = None
+    lte: date | None = None
+    between: tuple[date, date] | None = None
+    is_null: bool | None = None
+
+{% for enum_filter in enum_filters %}
+
+class {{ enum_filter.name }}(BaseModel):
+    eq: {{ enum_filter.type }} | None = None
+    neq: {{ enum_filter.type }} | None = None
+    in_: list[{{ enum_filter.type }}] | None = None
+    not_in: list[{{ enum_filter.type }}] | None = None
+    is_null: bool | None = None
+{% endfor %}
+
+
+class {{ model.class_name }}Filter(BaseModel):
+    """Type-safe filter for querying {{ model.class_name }} records."""
+{% for field in filter_fields %}
+    {{ field }}
+{% endfor %}
+    and_: list[{{ model.class_name }}Filter] | None = None
+    or_: list[{{ model.class_name }}Filter] | None = None

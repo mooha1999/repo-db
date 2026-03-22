@@ -1,0 +1,29 @@
+{{ header }}
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+from typing import TYPE_CHECKING
+{% if related_imports %}
+
+if TYPE_CHECKING:
+{{ related_imports }}
+{% endif %}
+
+
+class LoadStrategy(str, Enum):
+    SELECT_IN = "selectin"
+    JOINED = "joined"
+    SUBQUERY = "subquery"
+
+
+@dataclass
+class {{ model.class_name }}LoadOptions:
+    """Loading options for {{ model.class_name }} relationships."""
+{% if load_fields %}
+{% for field in load_fields %}
+    {{ field }}
+{% endfor %}
+{% else %}
+    pass
+{% endif %}

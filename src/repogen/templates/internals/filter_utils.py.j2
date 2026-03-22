@@ -1,0 +1,103 @@
+{{ header }}
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel
+from sqlalchemy import and_, or_
+from sqlalchemy.orm import Query
+
+
+def apply_filters(query: Any, filter_obj: BaseModel, model_class: type) -> Any:
+    """
+    Apply filters from a Pydantic filter model to a SQLAlchemy query.
+
+    Iterates over set fields in the filter, maps each to the corresponding
+    SQLAlchemy column, and appends .where() clauses.
+    """
+    conditions = _build_conditions(filter_obj, model_class)
+    if conditions:
+        query = query.where(and_(*conditions))
+    return query
+
+
+def _build_conditions(filter_obj: BaseModel, model_class: type) -> list:
+    """Recursively build SQLAlchemy conditions from a filter object."""
+    conditions = []
+    filter_data = filter_obj.model_dump(exclude_unset=True)
+
+    for field_name, field_value in filter_data.items():
+        if field_value is None:
+            continue
+
+        # Handle logical operators
+        if field_name == "and_" and isinstance(field_value, list):
+            sub_conditions = []
+            for sub_filter in field_value:
+                if isinstance(sub_filter, BaseModel):
+                    sub_conds = _build_conditions(sub_filter, model_class)
+                    if sub_conds:
+                        sub_conditions.append(and_(*sub_conds))
+            if sub_conditions:
+                conditions.append(and_(*sub_conditions))
+            continue
+
+        if field_name == "or_" and isinstance(field_value, list):
+            sub_conditions = []
+            for sub_filter in field_value:
+                if isinstance(sub_filter, BaseModel):
+                    sub_conds = _build_conditions(sub_filter, model_class)
+                    if sub_conds:
+                        sub_conditions.append(and_(*sub_conds))
+            if sub_conditions:
+                conditions.append(or_(*sub_conditions))
+            continue
+
+        # Get the SQLAlchemy column
+        column = getattr(model_class, field_name, None)
+        if column is None:
+            continue
+
+        # field_value should be a dict of operators
+        if isinstance(field_value, dict):
+            for op, value in field_value.items():
+                if value is None:
+                    continue
+                condition = _apply_operator(column, op, value)
+                if condition is not None:
+                    conditions.append(condition)
+
+    return conditions
+
+
+def _apply_operator(column: Any, op: str, value: Any) -> Any:
+    """Apply a single filter operator to a column."""
+    if op == "eq":
+        return column == value
+    elif op == "neq":
+        return column != value
+    elif op == "gt":
+        return column > value
+    elif op == "gte":
+        return column >= value
+    elif op == "lt":
+        return column < value
+    elif op == "lte":
+        return column <= value
+    elif op == "like":
+        return column.like(value)
+    elif op == "ilike":
+        return column.ilike(value)
+    elif op == "in_":
+        return column.in_(value)
+    elif op == "not_in":
+        return column.notin_(value)
+    elif op == "is_null":
+        if value is True:
+            return column.is_(None)
+        elif value is False:
+            return column.is_not(None)
+    elif op == "between":
+        if isinstance(value, (list, tuple)) and len(value) == 2:
+            return column.between(value[0], value[1])
+    return None

@@ -1,0 +1,28 @@
+{{ header }}
+{% if enum_imports %}
+{{ enum_imports }}
+{% endif %}
+from pydantic import BaseModel
+{% if type_imports %}
+{{ type_imports }}
+{% endif %}
+
+
+class {{ model.class_name }}Create(BaseModel):
+{%- if create_fields %}
+{% for f in create_fields %}
+    {{ f }}
+{% endfor %}
+{%- else %}
+    pass
+{%- endif %}
+
+
+class {{ model.class_name }}Update(BaseModel):
+{%- if update_fields %}
+{% for f in update_fields %}
+    {{ f }}
+{% endfor %}
+{%- else %}
+    pass
+{%- endif %}

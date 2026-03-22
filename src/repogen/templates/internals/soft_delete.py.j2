@@ -1,0 +1,16 @@
+{{ header }}
+from __future__ import annotations
+
+from typing import Any
+
+
+def apply_soft_delete_filter(query: Any, column: Any, include_deleted: bool) -> Any:
+    """
+    Apply soft delete filtering to a query.
+
+    If include_deleted is False, append .where(column.is_(None)).
+    Otherwise, return query unchanged.
+    """
+    if not include_deleted:
+        query = query.where(column.is_(None))
+    return query

@@ -1,0 +1,236 @@
+{{ header }}
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, delete as sa_delete
+{{ model_import }}
+{{ dto_import }}
+{{ filter_import }}
+{{ load_options_import }}
+from {{ internals_path }}._internals.filter_utils import apply_filters
+from {{ internals_path }}._internals.loading_utils import apply_load_options
+{% if model.is_soft_deletable %}
+from {{ internals_path }}._internals.soft_delete import apply_soft_delete_filter
+{% endif %}
+
+
+class {{ model.class_name }}Repository:
+    """
+    Repository for {{ model.class_name }} model.
+
+    This repository does not manage transactions. The caller is responsible
+    for committing or rolling back the session.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get_by_id(
+        self,
+{% for pk in pk_params %}
+        {{ pk }},
+{% endfor %}
+        *,
+        load_options: {{ model.class_name }}LoadOptions | None = None,
+{% if model.is_soft_deletable %}
+        include_deleted: bool = False,
+{% endif %}
+    ) -> {{ model.class_name }} | None:
+        """Fetch a single {{ model.class_name }} by primary key."""
+        query = select({{ model.class_name }})
+{% for pk in pk_where_clauses %}
+        query = query.where({{ pk }})
+{% endfor %}
+{% if model.is_soft_deletable %}
+        query = apply_soft_delete_filter(query, {{ model.class_name }}.{{ model.soft_delete_column }}, include_deleted)
+{% endif %}
+        if load_options is not None:
+            query = apply_load_options(query, load_options, {{ model.class_name }})
+        result = await self._session.execute(query)
+        return result.scalars().first()
+{% for unique_method in unique_methods %}
+
+    async def get_by_{{ unique_method.column_name }}(
+        self,
+        {{ unique_method.column_name }}: {{ unique_method.python_type }},
+        *,
+        load_options: {{ model.class_name }}LoadOptions | None = None,
+{% if model.is_soft_deletable %}
+        include_deleted: bool = False,
+{% endif %}
+    ) -> {{ model.class_name }} | None:
+        """Fetch a single {{ model.class_name }} by {{ unique_method.column_name }}."""
+        query = select({{ model.class_name }}).where(
+            {{ model.class_name }}.{{ unique_method.column_name }} == {{ unique_method.column_name }}
+        )
+{% if model.is_soft_deletable %}
+        query = apply_soft_delete_filter(query, {{ model.class_name }}.{{ model.soft_delete_column }}, include_deleted)
+{% endif %}
+        if load_options is not None:
+            query = apply_load_options(query, load_options, {{ model.class_name }})
+        result = await self._session.execute(query)
+        return result.scalars().first()
+{% endfor %}
+
+    async def get_many(
+        self,
+        *,
+        filters: {{ model.class_name }}Filter | None = None,
+        load_options: {{ model.class_name }}LoadOptions | None = None,
+{% if model.is_soft_deletable %}
+        include_deleted: bool = False,
+{% endif %}
+        order_by: list[str] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[{{ model.class_name }}]:
+        """Fetch multiple {{ model.class_name }} records matching optional filters."""
+        query = select({{ model.class_name }})
+{% if model.is_soft_deletable %}
+        query = apply_soft_delete_filter(query, {{ model.class_name }}.{{ model.soft_delete_column }}, include_deleted)
+{% endif %}
+        if filters is not None:
+            query = apply_filters(query, filters, {{ model.class_name }})
+        if load_options is not None:
+            query = apply_load_options(query, load_options, {{ model.class_name }})
+        if order_by is not None:
+            for field in order_by:
+                if field.startswith("-"):
+                    col = getattr({{ model.class_name }}, field[1:], None)
+                    if col is not None:
+                        query = query.order_by(col.desc())
+                else:
+                    col = getattr({{ model.class_name }}, field, None)
+                    if col is not None:
+                        query = query.order_by(col.asc())
+        if offset is not None:
+            query = query.offset(offset)
+        if limit is not None:
+            query = query.limit(limit)
+        result = await self._session.execute(query)
+        return list(result.scalars().all())
+
+    async def get_one(
+        self,
+        *,
+        filters: {{ model.class_name }}Filter,
+        load_options: {{ model.class_name }}LoadOptions | None = None,
+{% if model.is_soft_deletable %}
+        include_deleted: bool = False,
+{% endif %}
+    ) -> {{ model.class_name }} | None:
+        """Fetch a single {{ model.class_name }} matching filters. Returns None if not found."""
+        query = select({{ model.class_name }})
+{% if model.is_soft_deletable %}
+        query = apply_soft_delete_filter(query, {{ model.class_name }}.{{ model.soft_delete_column }}, include_deleted)
+{% endif %}
+        if filters is not None:
+            query = apply_filters(query, filters, {{ model.class_name }})
+        if load_options is not None:
+            query = apply_load_options(query, load_options, {{ model.class_name }})
+        result = await self._session.execute(query)
+        return result.scalars().first()
+
+    async def create(self, dto: {{ model.class_name }}Create) -> {{ model.class_name }}:
+        """Create a single {{ model.class_name }} from a validated DTO."""
+        instance = {{ model.class_name }}(**dto.model_dump(exclude_unset=True))
+        self._session.add(instance)
+        await self._session.flush()
+        await self._session.refresh(instance)
+        return instance
+
+    async def create_many(self, dtos: list[{{ model.class_name }}Create]) -> list[{{ model.class_name }}]:
+        """Bulk create {{ model.class_name }} records."""
+        instances = [{{ model.class_name }}(**dto.model_dump(exclude_unset=True)) for dto in dtos]
+        self._session.add_all(instances)
+        await self._session.flush()
+        for instance in instances:
+            await self._session.refresh(instance)
+        return instances
+
+    async def update(self, dto: {{ model.class_name }}Update) -> {{ model.class_name }} | None:
+        """
+        Update a {{ model.class_name }}. Only non-None fields in the DTO are applied.
+        Returns the updated {{ model.class_name }} or None if not found.
+        """
+        instance = await self.get_by_id({{ pk_dto_access }})
+        if instance is None:
+            return None
+        update_data = dto.model_dump(exclude_unset=True)
+        for key in {{ pk_names }}:
+            update_data.pop(key, None)
+        for key, value in update_data.items():
+            setattr(instance, key, value)
+        await self._session.flush()
+        await self._session.refresh(instance)
+        return instance
+
+    async def delete(self, {{ pk_delete_params }}) -> bool:
+{% if model.is_soft_deletable %}
+        """Soft delete a {{ model.class_name }} by setting {{ model.soft_delete_column }} = now()."""
+        from datetime import datetime as _dt, timezone as _tz
+        instance = await self.get_by_id({{ pk_pass_args }})
+        if instance is None:
+            return False
+        setattr(instance, "{{ model.soft_delete_column }}", _dt.now(_tz.utc))
+        await self._session.flush()
+        return True
+{% else %}
+        """Hard delete a {{ model.class_name }} by primary key. Returns True if a record was deleted."""
+        query = sa_delete({{ model.class_name }})
+{% for pk in pk_where_clauses_for_delete %}
+        query = query.where({{ pk }})
+{% endfor %}
+        result = await self._session.execute(query)
+        await self._session.flush()
+        return result.rowcount > 0
+{% endif %}
+{% if model.is_soft_deletable %}
+
+    async def hard_delete(self, {{ pk_delete_params }}) -> bool:
+        """Permanently delete a record. Use with caution. Returns True if a record was deleted."""
+        query = sa_delete({{ model.class_name }})
+{% for pk in pk_where_clauses_for_delete %}
+        query = query.where({{ pk }})
+{% endfor %}
+        result = await self._session.execute(query)
+        await self._session.flush()
+        return result.rowcount > 0
+
+    async def restore(self, {{ pk_delete_params }}) -> {{ model.class_name }} | None:
+        """Restore a soft-deleted record by setting {{ model.soft_delete_column }} = None."""
+        instance = await self.get_by_id({{ pk_pass_args }}, include_deleted=True)
+        if instance is None:
+            return None
+        setattr(instance, "{{ model.soft_delete_column }}", None)
+        await self._session.flush()
+        await self._session.refresh(instance)
+        return instance
+{% endif %}
+
+    async def count(
+        self,
+        *,
+        filters: {{ model.class_name }}Filter | None = None,
+{% if model.is_soft_deletable %}
+        include_deleted: bool = False,
+{% endif %}
+    ) -> int:
+        """Count {{ model.class_name }} records matching optional filters."""
+        query = select(func.count()).select_from({{ model.class_name }})
+{% if model.is_soft_deletable %}
+        query = apply_soft_delete_filter(query, {{ model.class_name }}.{{ model.soft_delete_column }}, include_deleted)
+{% endif %}
+        if filters is not None:
+            query = apply_filters(query, filters, {{ model.class_name }})
+        result = await self._session.execute(query)
+        return result.scalar_one()
+
+    async def exists(
+        self,
+        *,
+        filters: {{ model.class_name }}Filter,
+{% if model.is_soft_deletable %}
+        include_deleted: bool = False,
+{% endif %}
+    ) -> bool:
+        """Check if any {{ model.class_name }} matches the given filters."""
+        return (await self.count(filters=filters{% if model.is_soft_deletable %}, include_deleted=include_deleted{% endif %})) > 0

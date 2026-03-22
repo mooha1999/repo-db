@@ -1,0 +1,109 @@
+{{ header }}
+from __future__ import annotations
+
+from dataclasses import fields
+from enum import Enum
+from typing import Any
+
+from sqlalchemy.orm import (
+    selectinload,
+    joinedload,
+    subqueryload,
+    RelationshipProperty,
+)
+from sqlalchemy import inspect as sa_inspect
+
+
+class LoadStrategy(str, Enum):
+    SELECT_IN = "selectin"
+    JOINED = "joined"
+    SUBQUERY = "subquery"
+
+
+def _get_loader(strategy: LoadStrategy):
+    """Get the SQLAlchemy loader function for a strategy."""
+    if strategy == LoadStrategy.SELECT_IN:
+        return selectinload
+    elif strategy == LoadStrategy.JOINED:
+        return joinedload
+    elif strategy == LoadStrategy.SUBQUERY:
+        return subqueryload
+    raise ValueError(f"Unknown load strategy: {strategy}")
+
+
+def apply_load_options(query: Any, load_options: Any, model_class: type) -> Any:
+    """
+    Apply load options from a dataclass to a SQLAlchemy query.
+
+    For each non-None field in load_options:
+    - If it's a LoadStrategy enum, apply the corresponding loader.
+    - If it's a nested LoadOptions dataclass, apply the default strategy
+      and recurse into the nested options.
+
+    Default strategies:
+    - to-one (uselist=False): joinedload
+    - to-many (uselist=True): selectinload
+    """
+    mapper = sa_inspect(model_class)
+    relationships = {r.key: r for r in mapper.relationships}
+
+    for field in fields(load_options):
+        value = getattr(load_options, field.name)
+        if value is None:
+            continue
+
+        rel = relationships.get(field.name)
+        if rel is None:
+            continue
+
+        rel_attr = getattr(model_class, field.name)
+
+        if isinstance(value, LoadStrategy):
+            loader = _get_loader(value)
+            query = query.options(loader(rel_attr))
+        elif hasattr(value, '__dataclass_fields__'):
+            # Nested load options - use default strategy based on relationship type
+            if rel.uselist:
+                default_strategy = LoadStrategy.SELECT_IN
+            else:
+                default_strategy = LoadStrategy.JOINED
+            loader = _get_loader(default_strategy)
+            # Apply the loader and recurse
+            loader_opt = loader(rel_attr)
+            query = query.options(
+                _apply_nested_load_options(loader_opt, value, rel.mapper.class_)
+            )
+
+    return query
+
+
+def _apply_nested_load_options(parent_loader: Any, load_options: Any, model_class: type) -> Any:
+    """Recursively apply nested load options."""
+    mapper = sa_inspect(model_class)
+    relationships = {r.key: r for r in mapper.relationships}
+
+    current = parent_loader
+    for field in fields(load_options):
+        value = getattr(load_options, field.name)
+        if value is None:
+            continue
+
+        rel = relationships.get(field.name)
+        if rel is None:
+            continue
+
+        rel_attr = getattr(model_class, field.name)
+
+        if isinstance(value, LoadStrategy):
+            loader = _get_loader(value)
+            current = current.options(loader(rel_attr))
+        elif hasattr(value, '__dataclass_fields__'):
+            if rel.uselist:
+                default_strategy = LoadStrategy.SELECT_IN
+            else:
+                default_strategy = LoadStrategy.JOINED
+            loader = _get_loader(default_strategy)
+            nested = _apply_nested_load_options(loader(rel_attr), value, rel.mapper.class_)
+            current = current.options(nested)
+
+    return current
