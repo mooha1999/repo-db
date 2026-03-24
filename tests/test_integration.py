@@ -6,7 +6,11 @@ verify that the generated repositories, DTOs, and filters actually work.
 """
 from __future__ import annotations
 
+import json
 import py_compile
+import shutil
+import subprocess
+import sys
 from decimal import Decimal
 from pathlib import Path
 
@@ -25,6 +29,52 @@ def test_all_generated_files_compile(generated_package):
     assert len(py_files) > 0, "No .py files found in generated output"
     for path in py_files:
         py_compile.compile(str(path), doraise=True)
+
+
+# ---------------------------------------------------------------------------
+# Pyright strict type check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(shutil.which("pyright") is None, reason="pyright not installed")
+def test_generated_code_passes_pyright_strict(generated_package, test_models_file):
+    """All generated code passes pyright in strict mode with zero errors."""
+    # Write a pyrightconfig.json next to the generated package
+    config_dir = generated_package.parent
+    config = {
+        "include": [str(generated_package)],
+        "extraPaths": [
+            str(test_models_file.parent),
+            str(Path(__file__).resolve().parent.parent / "src"),
+        ],
+        "typeCheckingMode": "strict",
+        "pythonVersion": "3.11",
+    }
+    config_path = config_dir / "pyrightconfig.json"
+    config_path.write_text(json.dumps(config))
+
+    result = subprocess.run(
+        ["pyright", "--outputjson"],
+        capture_output=True,
+        text=True,
+        cwd=str(config_dir),
+        timeout=60,
+    )
+
+    diagnostics = json.loads(result.stdout) if result.stdout else {}
+    error_count = diagnostics.get("summary", {}).get("errorCount", -1)
+
+    if error_count != 0:
+        # Build a readable message from the diagnostics
+        lines = []
+        for diag in diagnostics.get("generalDiagnostics", []):
+            f = diag.get("file", "?")
+            r = diag.get("range", {}).get("start", {})
+            msg = diag.get("message", "")
+            rule = diag.get("rule", "")
+            lines.append(f"  {f}:{r.get('line', '?')} - {msg} ({rule})")
+        detail = "\n".join(lines[:30])
+        pytest.fail(f"pyright strict found {error_count} error(s):\n{detail}")
 
 
 # ---------------------------------------------------------------------------

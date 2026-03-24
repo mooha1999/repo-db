@@ -1,10 +1,11 @@
 {{ header }}
 from __future__ import annotations
 
+from datetime import date, datetime
+from decimal import Decimal
+from uuid import UUID
+
 from pydantic import BaseModel
-{% if type_imports %}
-{{ type_imports }}
-{% endif %}
 {% if enum_imports %}
 {{ enum_imports }}
 {% endif %}

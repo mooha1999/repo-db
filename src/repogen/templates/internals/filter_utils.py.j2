@@ -1,14 +1,13 @@
 {{ header }}
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel
-from sqlalchemy import and_, or_
-from sqlalchemy.orm import Query
+from sqlalchemy import ColumnElement, and_, or_
 
 
-def apply_filters(query: Any, filter_obj: BaseModel, model_class: type) -> Any:
+def apply_filters(query: Any, filter_obj: BaseModel, model_class: type[Any]) -> Any:
     """
     Apply filters from a Pydantic filter model to a SQLAlchemy query.
 
@@ -21,10 +20,12 @@ def apply_filters(query: Any, filter_obj: BaseModel, model_class: type) -> Any:
     return query
 
 
-def _build_conditions(filter_obj: BaseModel, model_class: type) -> list:
+def _build_conditions(
+    filter_obj: BaseModel, model_class: type[Any]
+) -> list[ColumnElement[bool]]:
     """Recursively build SQLAlchemy conditions from a filter object."""
-    conditions = []
-    filter_data = filter_obj.model_dump(exclude_unset=True)
+    conditions: list[ColumnElement[bool]] = []
+    filter_data: dict[str, Any] = filter_obj.model_dump(exclude_unset=True)
 
     for field_name, field_value in filter_data.items():
         if field_value is None:
@@ -32,10 +33,10 @@ def _build_conditions(filter_obj: BaseModel, model_class: type) -> list:
 
         # Handle logical operators
         if field_name == "and_" and isinstance(field_value, list):
-            sub_conditions = []
-            for sub_filter in field_value:
-                if isinstance(sub_filter, BaseModel):
-                    sub_conds = _build_conditions(sub_filter, model_class)
+            sub_conditions: list[ColumnElement[bool]] = []
+            for raw_sub in cast(list[Any], field_value):
+                if isinstance(raw_sub, BaseModel):
+                    sub_conds = _build_conditions(raw_sub, model_class)
                     if sub_conds:
                         sub_conditions.append(and_(*sub_conds))
             if sub_conditions:
@@ -43,61 +44,63 @@ def _build_conditions(filter_obj: BaseModel, model_class: type) -> list:
             continue
 
         if field_name == "or_" and isinstance(field_value, list):
-            sub_conditions = []
-            for sub_filter in field_value:
-                if isinstance(sub_filter, BaseModel):
-                    sub_conds = _build_conditions(sub_filter, model_class)
+            or_sub_conditions: list[ColumnElement[bool]] = []
+            for or_raw_sub in cast(list[Any], field_value):
+                if isinstance(or_raw_sub, BaseModel):
+                    sub_conds = _build_conditions(or_raw_sub, model_class)
                     if sub_conds:
-                        sub_conditions.append(and_(*sub_conds))
-            if sub_conditions:
-                conditions.append(or_(*sub_conditions))
+                        or_sub_conditions.append(and_(*sub_conds))
+            if or_sub_conditions:
+                conditions.append(or_(*or_sub_conditions))
             continue
 
         # Get the SQLAlchemy column
-        column = getattr(model_class, field_name, None)
+        column: Any = getattr(model_class, field_name, None)
         if column is None:
             continue
 
         # field_value should be a dict of operators
         if isinstance(field_value, dict):
-            for op, value in field_value.items():
-                if value is None:
+            for op_name, op_value in cast(dict[str, Any], field_value).items():
+                if op_value is None:
                     continue
-                condition = _apply_operator(column, op, value)
+                condition = _apply_operator(column, op_name, op_value)
                 if condition is not None:
                     conditions.append(condition)
 
     return conditions
 
 
-def _apply_operator(column: Any, op: str, value: Any) -> Any:
+def _apply_operator(
+    column: Any, op: str, value: Any
+) -> ColumnElement[bool] | None:
     """Apply a single filter operator to a column."""
     if op == "eq":
-        return column == value
+        return column == value  # type: ignore[no-any-return]
     elif op == "neq":
-        return column != value
+        return column != value  # type: ignore[no-any-return]
     elif op == "gt":
-        return column > value
+        return column > value  # type: ignore[no-any-return]
     elif op == "gte":
-        return column >= value
+        return column >= value  # type: ignore[no-any-return]
     elif op == "lt":
-        return column < value
+        return column < value  # type: ignore[no-any-return]
     elif op == "lte":
-        return column <= value
+        return column <= value  # type: ignore[no-any-return]
     elif op == "like":
-        return column.like(value)
+        return column.like(value)  # type: ignore[no-any-return]
     elif op == "ilike":
-        return column.ilike(value)
+        return column.ilike(value)  # type: ignore[no-any-return]
     elif op == "in_":
-        return column.in_(value)
+        return column.in_(value)  # type: ignore[no-any-return]
     elif op == "not_in":
-        return column.notin_(value)
+        return column.notin_(value)  # type: ignore[no-any-return]
     elif op == "is_null":
         if value is True:
-            return column.is_(None)
+            return column.is_(None)  # type: ignore[no-any-return]
         elif value is False:
-            return column.is_not(None)
+            return column.is_not(None)  # type: ignore[no-any-return]
     elif op == "between":
-        if isinstance(value, (list, tuple)) and len(value) == 2:
-            return column.between(value[0], value[1])
+        if isinstance(value, (list, tuple)) and len(value) == 2:  # type: ignore[arg-type]
+            return column.between(value[0], value[1])  # type: ignore[no-any-return]
     return None

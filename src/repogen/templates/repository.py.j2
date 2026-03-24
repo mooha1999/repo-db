@@ -1,6 +1,10 @@
 {{ header }}
+from __future__ import annotations
+
+from typing import Any, cast
+
+from sqlalchemy import CursorResult, delete as sa_delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, delete as sa_delete
 {{ model_import }}
 {{ dto_import }}
 {{ filter_import }}
@@ -94,7 +98,7 @@ class {{ model.class_name }}Repository:
         if order_by is not None:
             for field in order_by:
                 if field.startswith("-"):
-                    col = getattr({{ model.class_name }}, field[1:], None)
+                    col: Any = getattr({{ model.class_name }}, field[1:], None)
                     if col is not None:
                         query = query.order_by(col.desc())
                 else:
@@ -122,8 +126,7 @@ class {{ model.class_name }}Repository:
 {% if model.is_soft_deletable %}
         query = apply_soft_delete_filter(query, {{ model.class_name }}.{{ model.soft_delete_column }}, include_deleted)
 {% endif %}
-        if filters is not None:
-            query = apply_filters(query, filters, {{ model.class_name }})
+        query = apply_filters(query, filters, {{ model.class_name }})
         if load_options is not None:
             query = apply_load_options(query, load_options, {{ model.class_name }})
         result = await self._session.execute(query)
@@ -179,7 +182,7 @@ class {{ model.class_name }}Repository:
 {% for pk in pk_where_clauses_for_delete %}
         query = query.where({{ pk }})
 {% endfor %}
-        result = await self._session.execute(query)
+        result = cast(CursorResult[Any], await self._session.execute(query))
         await self._session.flush()
         return result.rowcount > 0
 {% endif %}
@@ -191,7 +194,7 @@ class {{ model.class_name }}Repository:
 {% for pk in pk_where_clauses_for_delete %}
         query = query.where({{ pk }})
 {% endfor %}
-        result = await self._session.execute(query)
+        result = cast(CursorResult[Any], await self._session.execute(query))
         await self._session.flush()
         return result.rowcount > 0
 
@@ -222,7 +225,7 @@ class {{ model.class_name }}Repository:
         if filters is not None:
             query = apply_filters(query, filters, {{ model.class_name }})
         result = await self._session.execute(query)
-        return result.scalar_one()
+        return result.scalar_one()  # type: ignore[return-value]
 
     async def exists(
         self,

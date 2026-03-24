@@ -159,6 +159,8 @@ def _generate_init(model_irs: list, output_path: Path):
         "",
     ]
 
+    all_names: list[str] = []
+
     for m in model_irs:
         snake = _snake_case(m.class_name)
         name = m.class_name
@@ -166,7 +168,17 @@ def _generate_init(model_irs: list, output_path: Path):
         lines.append(f"from .{snake}_filters import {name}Filter")
         lines.append(f"from .{snake}_load_options import {name}LoadOptions")
         lines.append(f"from .{snake}_repository import {name}Repository")
+        all_names.extend([
+            f'"{name}Create"', f'"{name}Update"',
+            f'"{name}Filter"', f'"{name}LoadOptions"',
+            f'"{name}Repository"',
+        ])
 
+    lines.append("")
+    lines.append("__all__ = [")
+    for entry in all_names:
+        lines.append(f"    {entry},")
+    lines.append("]")
     lines.append("")  # trailing newline
 
     init_path = output_path / "__init__.py"
